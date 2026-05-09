@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { createClient } from "@supabase/supabase-js";
 import {
   Home, Upload, FileText, BarChart3, MapPin, Ruler,
   Calendar, Hash, Search, Plus, ChevronRight, ChevronLeft,
@@ -6,106 +7,64 @@ import {
   LogOut, User, Settings, Filter, ArrowUpDown, FileCheck,
   Building2, Trees, Mountain, Eye, Lock, Mail, Layers,
   Shield, Activity, Zap, ArrowRight, Sparkles, AlertTriangle,
-  CheckCircle, Info, ExternalLink, Bell
+  CheckCircle, Info, ExternalLink, Bell, Loader2, RefreshCw
 } from "lucide-react";
  
-// ----------------- MOCK DATA -----------------
-const MOCK_PROPERTIES = [
-  {
-    id: "TC-2026-0142",
-    designacao: "Quinta da Ribeira",
-    concelho: "Aguiar da Beira",
-    freguesia: "Pinheiro",
-    artigo: "1452 / Secção B",
-    area: 12450,
-    classificacao: "Rústico",
-    score: 84,
-    status: "Analisado",
-    data: "2026-05-04",
-    pdmRef: "PDM-AGB-Rev2013"
-  },
-  {
-    id: "TC-2026-0141",
-    designacao: "Lote Industrial Norte",
-    concelho: "Viseu",
-    freguesia: "Cavernães",
-    artigo: "8821 / Secção C",
-    area: 4890,
-    classificacao: "Urbano",
-    score: 92,
-    status: "Analisado",
-    data: "2026-05-02",
-    pdmRef: "PDM-VIS-Alt2024"
-  },
-  {
-    id: "TC-2026-0140",
-    designacao: "Terreno Vinhal Douro",
-    concelho: "Lamego",
-    freguesia: "Várzea de Abrunhais",
-    artigo: "302 / Secção A",
-    area: 28100,
-    classificacao: "Rústico",
-    score: 47,
-    status: "Reservas",
-    data: "2026-04-28",
-    pdmRef: "PDM-LMG-Rev2019"
-  },
-  {
-    id: "TC-2026-0139",
-    designacao: "Solar do Pinhal",
-    concelho: "Trancoso",
-    freguesia: "Vilares",
-    artigo: "1089 / Secção D",
-    area: 6720,
-    classificacao: "Urbano de baixa densidade",
-    score: 71,
-    status: "Analisado",
-    data: "2026-04-25",
-    pdmRef: "PDM-TRC-Rev2015"
-  },
-  {
-    id: "TC-2026-0138",
-    designacao: "Olival do Sul",
-    concelho: "Évora",
-    freguesia: "Nossa Senhora da Tourega",
-    artigo: "44 / Secção F",
-    area: 51200,
-    classificacao: "Rústico",
-    score: 28,
-    status: "Inviável",
-    data: "2026-04-21",
-    pdmRef: "PDM-EVR-Rev2018"
-  },
-  {
-    id: "TC-2026-0137",
-    designacao: "Lote 12 - Várzea",
-    concelho: "Aguiar da Beira",
-    freguesia: "Sequeiros",
-    artigo: "990 / Secção B",
-    area: 1840,
-    classificacao: "Urbano",
-    score: 88,
-    status: "Analisado",
-    data: "2026-04-18",
-    pdmRef: "PDM-AGB-Rev2013"
-  },
-  {
-    id: "TC-2026-0136",
-    designacao: "Herdade do Vale",
-    concelho: "Beja",
-    freguesia: "Salvada",
-    artigo: "76 / Secção H",
-    area: 142000,
-    classificacao: "Rústico",
-    score: 62,
-    status: "Analisado",
-    data: "2026-04-12",
-    pdmRef: "PDM-BJA-Rev2014"
-  },
-];
+// ----------------- SUPABASE CLIENT -----------------
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+ 
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error(
+    "[TerraCerta] Faltam variáveis de ambiente VITE_SUPABASE_URL e/ou VITE_SUPABASE_ANON_KEY."
+  );
+}
+ 
+export const supabase = createClient(supabaseUrl ?? "", supabaseAnonKey ?? "");
+ 
+// ----------------- DATA LAYER -----------------
+/**
+ * Lê a tabela `propriedades` no Supabase.
+ * Mapeia colunas snake_case → o shape camelCase usado pela UI,
+ * para que possas evoluir o schema sem reescrever toda a aplicação.
+ */
+async function fetchPropriedades() {
+  const { data, error } = await supabase
+    .from("propriedades")
+    .select(
+      "id, designacao, concelho, freguesia, artigo, area, classificacao, score, status, data, pdm_ref"
+    )
+    .order("data", { ascending: false });
+ 
+  if (error) throw error;
+ 
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    designacao: row.designacao,
+    concelho: row.concelho,
+    freguesia: row.freguesia,
+    artigo: row.artigo,
+    area: row.area,
+    classificacao: row.classificacao,
+    score: row.score,
+    status: row.status,
+    data: row.data,
+    pdmRef: row.pdm_ref,
+  }));
+}
+ 
+/** Health-check usado no login: verifica que conseguimos falar com o Supabase. */
+async function pingSupabase() {
+  const { error } = await supabase
+    .from("propriedades")
+    .select("id", { count: "exact", head: true });
+  if (error) throw error;
+  return true;
+}
  
 // ----------------- HELPERS -----------------
-const formatNumber = (n) => new Intl.NumberFormat("pt-PT").format(n);
+const formatNumber = (n) =>
+  n == null ? "—" : new Intl.NumberFormat("pt-PT").format(n);
  
 const scoreColor = (s) => {
   if (s >= 80) return { text: "text-emerald-700", bg: "bg-emerald-50", ring: "stroke-emerald-500", border: "border-emerald-300" };
@@ -150,6 +109,25 @@ const Logo = ({ size = "md" }) => {
 const LoginPage = ({ onLogin }) => {
   const [email, setEmail] = useState("consultor@imobiliaria.pt");
   const [password, setPassword] = useState("••••••••••");
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState(null);
+ 
+  const handleLogin = async () => {
+    setChecking(true);
+    setError(null);
+    try {
+      await pingSupabase();
+      onLogin();
+    } catch (e) {
+      setError(
+        e?.message?.includes("fetch")
+          ? "Não foi possível contactar o Supabase. Verifica o URL e a ligação à internet."
+          : `Ligação ao Supabase falhou: ${e?.message ?? "erro desconhecido"}`
+      );
+    } finally {
+      setChecking(false);
+    }
+  };
  
   return (
     <div className="min-h-screen flex bg-white">
@@ -179,38 +157,29 @@ const LoginPage = ({ onLogin }) => {
               <stop offset="100%" stopColor="#a89c5a" />
             </linearGradient>
           </defs>
-          {/* Sky */}
           <rect width="800" height="600" fill="url(#sky)" />
-          {/* Sun */}
           <circle cx="600" cy="280" r="55" fill="#fff5dc" opacity="0.9" />
           <circle cx="600" cy="280" r="80" fill="#fff5dc" opacity="0.3" />
-          {/* Distant hills */}
           <path d="M0,520 Q150,440 320,470 T620,440 T800,460 L800,600 L0,600 Z" fill="url(#hill3)" opacity="0.7" />
-          {/* Mid hills */}
           <path d="M0,580 Q200,500 400,540 T800,520 L800,700 L0,700 Z" fill="url(#hill2)" />
-          {/* Foreground hill */}
           <path d="M0,680 Q250,620 500,660 T800,640 L800,1000 L0,1000 Z" fill="url(#hill1)" />
-          {/* Field rows */}
           <path d="M0,720 Q400,690 800,710 L800,1000 L0,1000 Z" fill="url(#field)" opacity="0.85" />
           {[750, 780, 810, 840, 870, 900, 930, 960].map((y, i) => (
             <path key={i} d={`M0,${y} Q400,${y - 8} 800,${y}`} stroke="#8a7a3e" strokeWidth="1.5" fill="none" opacity="0.4" />
           ))}
-          {/* Cypress trees silhouettes */}
           <ellipse cx="120" cy="640" rx="12" ry="38" fill="#1f3d1d" />
           <ellipse cx="155" cy="650" rx="10" ry="32" fill="#1f3d1d" />
           <ellipse cx="680" cy="610" rx="14" ry="42" fill="#1f3d1d" />
           <ellipse cx="710" cy="620" rx="11" ry="35" fill="#1f3d1d" />
-          {/* Stone wall hint */}
           <rect x="0" y="690" width="800" height="3" fill="#6b5d40" opacity="0.5" />
         </svg>
  
         <div className="relative z-10 flex flex-col justify-between p-12 text-white w-full">
           <Logo size="lg" />
- 
           <div className="space-y-4 max-w-md">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 backdrop-blur-sm border border-white/20 text-xs font-medium tracking-wide">
               <Sparkles size={12} />
-              MVP · Versão 0.4.1
+              MVP · Versão 0.5.0 · Supabase live
             </div>
             <h1 className="text-4xl font-semibold leading-tight tracking-tight" style={{ textShadow: "0 2px 12px rgba(0,0,0,0.35)" }}>
               A análise de viabilidade<br />de terrenos, redefinida.
@@ -220,7 +189,6 @@ const LoginPage = ({ onLogin }) => {
               Para os profissionais que avaliam o solo português com rigor.
             </p>
           </div>
- 
           <div className="flex items-center gap-6 text-xs text-white/80" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.3)" }}>
             <div className="flex items-center gap-1.5"><Shield size={14} /> RGPD compliant</div>
             <div className="flex items-center gap-1.5"><FileCheck size={14} /> Dados oficiais DGT</div>
@@ -274,12 +242,28 @@ const LoginPage = ({ onLogin }) => {
               Manter sessão iniciada neste dispositivo
             </label>
  
+            {error && (
+              <div className="flex items-start gap-2 p-3 bg-rose-50 border border-rose-200 rounded-md text-xs text-rose-700">
+                <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                <span>{error}</span>
+              </div>
+            )}
+ 
             <button
-              onClick={onLogin}
-              className="w-full mt-2 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium py-2.5 rounded-md transition-all flex items-center justify-center gap-2 group"
+              onClick={handleLogin}
+              disabled={checking}
+              className="w-full mt-2 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white text-sm font-medium py-2.5 rounded-md transition-all flex items-center justify-center gap-2 group"
             >
-              Entrar na plataforma
-              <ArrowRight size={15} className="group-hover:translate-x-0.5 transition" />
+              {checking ? (
+                <>
+                  <Loader2 size={15} className="animate-spin" /> A verificar ligação…
+                </>
+              ) : (
+                <>
+                  Entrar na plataforma
+                  <ArrowRight size={15} className="group-hover:translate-x-0.5 transition" />
+                </>
+              )}
             </button>
  
             <div className="relative my-5">
@@ -317,7 +301,7 @@ const TopBar = ({ onLogout, onHome }) => (
       <div className="flex items-center gap-2">
         <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-md text-xs text-slate-600">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-          SNIT online · sync 2 min
+          Supabase online
         </div>
         <button className="p-2 hover:bg-slate-100 rounded-md text-slate-500"><Bell size={16} /></button>
         <button className="p-2 hover:bg-slate-100 rounded-md text-slate-500"><Settings size={16} /></button>
@@ -333,44 +317,63 @@ const TopBar = ({ onLogout, onHome }) => (
 );
  
 // ----------------- DASHBOARD -----------------
-const Dashboard = ({ properties, onNew, onSelect, onLogout }) => {
+const Dashboard = ({ properties, loading, error, onRefresh, onNew, onSelect, onLogout }) => {
   const [filter, setFilter] = useState("");
   const filtered = properties.filter(p =>
-    p.designacao.toLowerCase().includes(filter.toLowerCase()) ||
-    p.concelho.toLowerCase().includes(filter.toLowerCase()) ||
-    p.id.toLowerCase().includes(filter.toLowerCase())
+    p.designacao?.toLowerCase().includes(filter.toLowerCase()) ||
+    p.concelho?.toLowerCase().includes(filter.toLowerCase()) ||
+    p.id?.toLowerCase().includes(filter.toLowerCase())
   );
  
-  const totalArea = properties.reduce((s, p) => s + p.area, 0);
-  const avgScore = Math.round(properties.reduce((s, p) => s + p.score, 0) / properties.length);
-  const viable = properties.filter(p => p.score >= 60).length;
+  const totalArea = properties.reduce((s, p) => s + (p.area || 0), 0);
+  const avgScore = properties.length
+    ? Math.round(properties.reduce((s, p) => s + (p.score || 0), 0) / properties.length)
+    : 0;
+  const viable = properties.filter(p => (p.score || 0) >= 60).length;
  
   return (
     <div className="min-h-screen bg-slate-50">
       <TopBar onLogout={onLogout} onHome={() => {}} />
  
       <main className="px-6 py-6 max-w-[1500px] mx-auto">
-        {/* Header */}
         <div className="flex items-end justify-between mb-6">
           <div>
             <div className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-1">Carteira</div>
             <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Dashboard de Imóveis</h1>
           </div>
-          <button
-            onClick={onNew}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-md transition shadow-sm"
-          >
-            <Plus size={15} /> Novo Imóvel
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onRefresh}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs text-slate-600 border border-slate-200 rounded-md hover:bg-slate-50 disabled:opacity-50"
+            >
+              <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> Atualizar
+            </button>
+            <button
+              onClick={onNew}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-md transition shadow-sm"
+            >
+              <Plus size={15} /> Novo Imóvel
+            </button>
+          </div>
         </div>
  
-        {/* Stat strip */}
+        {error && (
+          <div className="mb-4 flex items-start gap-2 p-3 bg-rose-50 border border-rose-200 rounded-md text-sm text-rose-700">
+            <AlertCircle size={16} className="shrink-0 mt-0.5" />
+            <div>
+              <div className="font-medium">Erro ao carregar dados do Supabase</div>
+              <div className="text-xs mt-0.5">{error}</div>
+            </div>
+          </div>
+        )}
+ 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-slate-200 border border-slate-200 rounded-md overflow-hidden mb-6">
           {[
-            { label: "Imóveis em carteira", value: properties.length, sub: "+2 esta semana", icon: Layers, accent: "text-slate-900" },
-            { label: "Área total agregada", value: `${formatNumber(Math.round(totalArea / 10000))} ha`, sub: `${formatNumber(totalArea)} m²`, icon: Ruler, accent: "text-slate-900" },
-            { label: "Health Score médio", value: avgScore, sub: "/100", icon: Activity, accent: "text-emerald-700" },
-            { label: "Viabilidade ≥ 60", value: `${viable}/${properties.length}`, sub: `${Math.round(viable / properties.length * 100)}% do portefólio`, icon: TrendingUp, accent: "text-emerald-700" },
+            { label: "Imóveis em carteira", value: loading ? "…" : properties.length, sub: "live", icon: Layers, accent: "text-slate-900" },
+            { label: "Área total agregada", value: loading ? "…" : `${formatNumber(Math.round(totalArea / 10000))} ha`, sub: `${formatNumber(totalArea)} m²`, icon: Ruler, accent: "text-slate-900" },
+            { label: "Health Score médio", value: loading ? "…" : avgScore, sub: "/100", icon: Activity, accent: "text-emerald-700" },
+            { label: "Viabilidade ≥ 60", value: loading ? "…" : `${viable}/${properties.length}`, sub: properties.length ? `${Math.round(viable / properties.length * 100)}% do portefólio` : "—", icon: TrendingUp, accent: "text-emerald-700" },
           ].map((s, i) => (
             <div key={i} className="bg-white p-4">
               <div className="flex items-start justify-between mb-2">
@@ -383,7 +386,6 @@ const Dashboard = ({ properties, onNew, onSelect, onLogout }) => {
           ))}
         </div>
  
-        {/* Toolbar */}
         <div className="bg-white border border-slate-200 rounded-t-md px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-md">
             <div className="relative flex-1">
@@ -404,63 +406,78 @@ const Dashboard = ({ properties, onNew, onSelect, onLogout }) => {
           </div>
         </div>
  
-        {/* Table */}
         <div className="bg-white border border-slate-200 border-t-0 rounded-b-md overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-500">
-                <th className="text-left px-4 py-2.5 font-medium">
-                  <button className="flex items-center gap-1 hover:text-slate-700">ID <ArrowUpDown size={11} /></button>
-                </th>
-                <th className="text-left px-4 py-2.5 font-medium">Designação</th>
-                <th className="text-left px-4 py-2.5 font-medium">Concelho / Freguesia</th>
-                <th className="text-left px-4 py-2.5 font-medium">Artigo Matricial</th>
-                <th className="text-right px-4 py-2.5 font-medium">Área (m²)</th>
-                <th className="text-left px-4 py-2.5 font-medium">Classificação</th>
-                <th className="text-center px-4 py-2.5 font-medium">Score</th>
-                <th className="text-left px-4 py-2.5 font-medium">Estado</th>
-                <th className="text-left px-4 py-2.5 font-medium">Data</th>
-                <th className="px-4 py-2.5"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filtered.map((p) => {
-                const c = scoreColor(p.score);
-                return (
-                  <tr key={p.id} onClick={() => onSelect(p)} className="hover:bg-emerald-50/40 cursor-pointer transition">
-                    <td className="px-4 py-3 text-xs font-mono text-slate-500">{p.id}</td>
-                    <td className="px-4 py-3 font-medium text-slate-900">{p.designacao}</td>
-                    <td className="px-4 py-3 text-slate-600">
-                      <div>{p.concelho}</div>
-                      <div className="text-xs text-slate-400">{p.freguesia}</div>
-                    </td>
-                    <td className="px-4 py-3 text-xs font-mono text-slate-600">{p.artigo}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-slate-900">{formatNumber(p.area)}</td>
-                    <td className="px-4 py-3 text-slate-600 text-xs">{p.classificacao}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-center gap-2">
-                        <div className="w-12 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                          <div className={`h-full ${c.text.replace('text-', 'bg-')}`} style={{ width: `${p.score}%` }}></div>
+          {loading ? (
+            <div className="py-16 flex flex-col items-center justify-center text-slate-400">
+              <Loader2 size={28} className="animate-spin mb-3" />
+              <div className="text-sm">A carregar imóveis do Supabase…</div>
+            </div>
+          ) : properties.length === 0 ? (
+            <div className="py-16 flex flex-col items-center justify-center text-center text-slate-400">
+              <Layers size={32} className="mb-3" />
+              <div className="text-sm font-medium text-slate-600">Nenhum imóvel encontrado</div>
+              <div className="text-xs mt-1 max-w-sm">
+                A tabela <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">propriedades</code> está vazia,
+                ou as policies de RLS não permitem leitura à role <code className="font-mono">anon</code>.
+              </div>
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-500">
+                  <th className="text-left px-4 py-2.5 font-medium">
+                    <button className="flex items-center gap-1 hover:text-slate-700">ID <ArrowUpDown size={11} /></button>
+                  </th>
+                  <th className="text-left px-4 py-2.5 font-medium">Designação</th>
+                  <th className="text-left px-4 py-2.5 font-medium">Concelho / Freguesia</th>
+                  <th className="text-left px-4 py-2.5 font-medium">Artigo Matricial</th>
+                  <th className="text-right px-4 py-2.5 font-medium">Área (m²)</th>
+                  <th className="text-left px-4 py-2.5 font-medium">Classificação</th>
+                  <th className="text-center px-4 py-2.5 font-medium">Score</th>
+                  <th className="text-left px-4 py-2.5 font-medium">Estado</th>
+                  <th className="text-left px-4 py-2.5 font-medium">Data</th>
+                  <th className="px-4 py-2.5"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filtered.map((p) => {
+                  const c = scoreColor(p.score || 0);
+                  return (
+                    <tr key={p.id} onClick={() => onSelect(p)} className="hover:bg-emerald-50/40 cursor-pointer transition">
+                      <td className="px-4 py-3 text-xs font-mono text-slate-500">{p.id}</td>
+                      <td className="px-4 py-3 font-medium text-slate-900">{p.designacao}</td>
+                      <td className="px-4 py-3 text-slate-600">
+                        <div>{p.concelho}</div>
+                        <div className="text-xs text-slate-400">{p.freguesia}</div>
+                      </td>
+                      <td className="px-4 py-3 text-xs font-mono text-slate-600">{p.artigo}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-slate-900">{formatNumber(p.area)}</td>
+                      <td className="px-4 py-3 text-slate-600 text-xs">{p.classificacao}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-center gap-2">
+                          <div className="w-12 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                            <div className={`h-full ${c.text.replace('text-', 'bg-')}`} style={{ width: `${p.score || 0}%` }}></div>
+                          </div>
+                          <span className={`text-xs font-semibold tabular-nums ${c.text} w-7 text-right`}>{p.score ?? "—"}</span>
                         </div>
-                        <span className={`text-xs font-semibold tabular-nums ${c.text} w-7 text-right`}>{p.score}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-block text-xs px-2 py-0.5 rounded-full border ${statusBadge(p.status)}`}>
-                        {p.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-500 tabular-nums">{p.data}</td>
-                    <td className="px-4 py-3 text-right">
-                      <ChevronRight size={15} className="text-slate-400 inline" />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-block text-xs px-2 py-0.5 rounded-full border ${statusBadge(p.status)}`}>
+                          {p.status || "Pendente"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-500 tabular-nums">{p.data}</td>
+                      <td className="px-4 py-3 text-right">
+                        <ChevronRight size={15} className="text-slate-400 inline" />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
           <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
-            <span>Última sincronização SNIT: hoje 09:42</span>
+            <span>Fonte: Supabase · tabela <code className="font-mono">propriedades</code></span>
             <div className="flex items-center gap-3">
               <button className="hover:text-slate-700">Exportar CSV</button>
               <button className="hover:text-slate-700 flex items-center gap-1">Ver tudo <ChevronRight size={11} /></button>
@@ -550,7 +567,6 @@ const UploadPage = ({ onCancel, onAnalyse }) => {
           })}
         </div>
  
-        {/* Options */}
         <div className="mt-6 bg-white border border-slate-200 rounded-md p-4">
           <div className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-3">Parâmetros de análise</div>
           <div className="grid grid-cols-2 gap-4 text-sm">
@@ -561,7 +577,6 @@ const UploadPage = ({ onCancel, onAnalyse }) => {
           </div>
         </div>
  
-        {/* Actions */}
         <div className="mt-6 flex items-center justify-between">
           <div className="text-xs text-slate-500 flex items-center gap-1.5">
             <Shield size={12} /> Documentos cifrados em repouso · removidos após 90 dias
@@ -616,11 +631,11 @@ const HealthGauge = ({ score }) => {
  
 // ----------------- ANALYSIS PAGE -----------------
 const AnalysisPage = ({ property, page, setPage, onBack, onLogout }) => {
-  const c = scoreColor(property.score);
+  const c = scoreColor(property.score || 0);
  
   const pdmFindings = [
     { label: "Classificação do solo", value: property.classificacao, status: "ok", source: "PDM Art. 14º" },
-    { label: "Categoria de espaço", value: "Espaço Agrícola de Produção (Tipo II)", status: property.score >= 60 ? "ok" : "warn", source: "Planta de Ordenamento" },
+    { label: "Categoria de espaço", value: "Espaço Agrícola de Produção (Tipo II)", status: (property.score || 0) >= 60 ? "ok" : "warn", source: "Planta de Ordenamento" },
     { label: "Subcategoria", value: "Áreas agrícolas complementares", status: "ok", source: "PDM Art. 27º nº2" },
     { label: "Índice de utilização (Iu)", value: "0,15", status: "warn", source: "PDM Art. 30º" },
     { label: "Cércea máxima", value: "6,5 m (2 pisos)", status: "ok", source: "PDM Art. 31º" },
@@ -630,14 +645,13 @@ const AnalysisPage = ({ property, page, setPage, onBack, onLogout }) => {
     { label: "Risco de incêndio rural", value: "Classe Média", status: "ok", source: "ICNF · Carta 2025" },
   ];
  
-  const conversionScore = Math.max(15, property.score - 22);
+  const conversionScore = Math.max(15, (property.score || 0) - 22);
  
   return (
     <div className="min-h-screen bg-slate-50">
       <TopBar onLogout={onLogout} onHome={onBack} />
  
       <main className="px-6 py-6 max-w-[1400px] mx-auto">
-        {/* Breadcrumb + header */}
         <div className="mb-5">
           <button onClick={onBack} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 mb-3">
             <ChevronLeft size={13} /> Imóveis · {property.id}
@@ -677,14 +691,12 @@ const AnalysisPage = ({ property, page, setPage, onBack, onLogout }) => {
         </div>
  
         {page === 1 ? (
-          // PAGE 1
           <div className="grid grid-cols-12 gap-4">
-            {/* Score + summary */}
             <div className="col-span-12 lg:col-span-4 space-y-4">
               <div className="bg-white border border-slate-200 rounded-md p-6 flex flex-col items-center text-center">
-                <HealthGauge score={property.score} />
+                <HealthGauge score={property.score || 0} />
                 <div className={`mt-4 px-3 py-1 rounded-full text-xs font-medium border ${c.bg} ${c.text} ${c.border}`}>
-                  {property.score >= 80 ? "Viabilidade elevada" : property.score >= 60 ? "Viabilidade boa com reservas" : property.score >= 40 ? "Viabilidade condicionada" : "Inviável nas condições atuais"}
+                  {(property.score || 0) >= 80 ? "Viabilidade elevada" : (property.score || 0) >= 60 ? "Viabilidade boa com reservas" : (property.score || 0) >= 40 ? "Viabilidade condicionada" : "Inviável nas condições atuais"}
                 </div>
                 <p className="text-xs text-slate-500 mt-3 leading-relaxed">
                   Score calculado com base em 14 indicadores do PDM, condicionantes legais e camadas do SNIT.
@@ -715,7 +727,6 @@ const AnalysisPage = ({ property, page, setPage, onBack, onLogout }) => {
               </div>
             </div>
  
-            {/* PDM Analysis */}
             <div className="col-span-12 lg:col-span-8 space-y-4">
               <div className="bg-white border border-slate-200 rounded-md">
                 <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
@@ -762,7 +773,6 @@ const AnalysisPage = ({ property, page, setPage, onBack, onLogout }) => {
                 </div>
               </div>
  
-              {/* Recomendações */}
               <div className="bg-white border border-slate-200 rounded-md p-5">
                 <h3 className="font-semibold text-slate-900 text-sm mb-3 flex items-center gap-2">
                   <Sparkles size={14} className="text-emerald-700" />
@@ -771,7 +781,7 @@ const AnalysisPage = ({ property, page, setPage, onBack, onLogout }) => {
                 <ul className="space-y-2.5 text-sm text-slate-700">
                   <li className="flex gap-3"><span className="text-emerald-700 font-mono text-xs mt-0.5">01</span><span>Solicitar <strong>delimitação</strong> da área REN ao ICNF antes de qualquer pedido de informação prévia.</span></li>
                   <li className="flex gap-3"><span className="text-emerald-700 font-mono text-xs mt-0.5">02</span><span>A faixa non aedificandi da EN229 reduz a área útil edificável em ~9%. Considerar no estudo prévio.</span></li>
-                  <li className="flex gap-3"><span className="text-emerald-700 font-mono text-xs mt-0.5">03</span><span>Iu de 0,15 permite até <strong>{formatNumber(Math.round(property.area * 0.15))} m²</strong> de construção. Avaliar PIP para confirmar.</span></li>
+                  <li className="flex gap-3"><span className="text-emerald-700 font-mono text-xs mt-0.5">03</span><span>Iu de 0,15 permite até <strong>{formatNumber(Math.round((property.area || 0) * 0.15))} m²</strong> de construção. Avaliar PIP para confirmar.</span></li>
                   <li className="flex gap-3"><span className="text-emerald-700 font-mono text-xs mt-0.5">04</span><span>O PDM tem <strong>3ª Alteração por Adaptação</strong> em vigor desde 12/03/2025 — recomenda-se confirmar versão.</span></li>
                 </ul>
               </div>
@@ -787,7 +797,6 @@ const AnalysisPage = ({ property, page, setPage, onBack, onLogout }) => {
             </div>
           </div>
         ) : (
-          // PAGE 2 — Urban conversion
           <div className="grid grid-cols-12 gap-4">
             <div className="col-span-12 lg:col-span-8 space-y-4">
               <div className="bg-white border border-slate-200 rounded-md">
@@ -838,7 +847,6 @@ const AnalysisPage = ({ property, page, setPage, onBack, onLogout }) => {
                 </div>
               </div>
  
-              {/* Cenário financeiro */}
               <div className="bg-white border border-slate-200 rounded-md p-5">
                 <h3 className="font-semibold text-slate-900 text-sm mb-1">Impacto no valor (cenário comparativo)</h3>
                 <p className="text-xs text-slate-500 mb-4">Estimativa baseada em transações comparáveis na região (DGRMI 2024-2026).</p>
@@ -858,7 +866,6 @@ const AnalysisPage = ({ property, page, setPage, onBack, onLogout }) => {
               </div>
             </div>
  
-            {/* Sidebar */}
             <div className="col-span-12 lg:col-span-4 space-y-4">
               <div className="bg-white border border-slate-200 rounded-md p-5">
                 <div className="flex items-center justify-between mb-3">
@@ -920,22 +927,48 @@ const AnalysisPage = ({ property, page, setPage, onBack, onLogout }) => {
 };
  
 // ----------------- ROOT -----------------
-export default function TerraCerta() {
+export default function App() {
   const [page, setPage] = useState("login");
-  const [selected, setSelected] = useState(MOCK_PROPERTIES[0]);
+  const [selected, setSelected] = useState(null);
   const [analysisPage, setAnalysisPage] = useState(1);
+ 
+  const [properties, setProperties] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+ 
+  const loadProperties = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchPropriedades();
+      setProperties(data);
+    } catch (e) {
+      setError(e?.message ?? "Erro desconhecido");
+      setProperties([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+ 
+  // Carrega da DB sempre que entramos no dashboard.
+  useEffect(() => {
+    if (page === "dashboard") loadProperties();
+  }, [page]);
  
   if (page === "login") return <LoginPage onLogin={() => setPage("dashboard")} />;
   if (page === "dashboard") return (
     <Dashboard
-      properties={MOCK_PROPERTIES}
+      properties={properties}
+      loading={loading}
+      error={error}
+      onRefresh={loadProperties}
       onNew={() => setPage("upload")}
       onSelect={(p) => { setSelected(p); setAnalysisPage(1); setPage("analysis"); }}
       onLogout={() => setPage("login")}
     />
   );
   if (page === "upload") return <UploadPage onCancel={() => setPage("dashboard")} onAnalyse={() => { setAnalysisPage(1); setPage("analysis"); }} />;
-  if (page === "analysis") return (
+  if (page === "analysis" && selected) return (
     <AnalysisPage
       property={selected}
       page={analysisPage}
