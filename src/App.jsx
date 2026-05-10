@@ -11,7 +11,7 @@ import {
   CheckCircle, Info, ExternalLink, Bell, Loader2, RefreshCw,
   Satellite, Map as MapIcon, Calculator, Globe2, Eye, EyeOff
 } from "lucide-react";
- 
+
 // ----------------- DATABASE CLIENT -----------------
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -19,23 +19,23 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.error("[TerraCerta] Configuração de ambiente em falta.");
 }
 const db = createClient(supabaseUrl ?? "", supabaseAnonKey ?? "");
- 
+
 // ----------------- AUTH (frontend-only · MVP) -----------------
 const ALLOWED_USERS = {
   "admin1@terracerta.pt": "portugal2026",
   "admin2@terracerta.pt": "portugal2026",
 };
- 
+
 // ----------------- DOMAIN CONSTANTS -----------------
 const CONCELHOS = ["Lisboa", "Sintra", "Oeiras", "Porto"];
- 
+
 const FREGUESIAS = {
   "Lisboa":  ["Arroios", "Estrela", "Belém"],
   "Sintra":  ["Alcabideche", "Colares", "Rio de Mouro"],
   "Oeiras":  ["Carnaxide", "Algés", "Paço de Arcos", "Oeiras e São Julião da Barra"],
   "Porto":   ["Bonfim", "Cedofeita", "Paranhos", "Campanhã"],
 };
- 
+
 const CLASSIFICACOES = [
   "Urbano",
   "Urbano de baixa densidade",
@@ -43,18 +43,18 @@ const CLASSIFICACOES = [
   "Espaço Industrial",
   "Espaço Florestal",
 ];
- 
+
 const PDM_LINKS = {
   "Lisboa": "https://www.lisboa.pt/cidade/urbanismo/planeamento-urbano/plano-diretor-municipal",
   "Sintra": "https://www.cm-sintra.pt/viver/urbanismo/plano-diretor-municipal",
   "Oeiras": "https://www.cm-oeiras.pt/pt/viver/urbanismo/instrumentos-de-gestao-territorial/pdm",
   "Porto":  "https://www.cm-porto.pt/urbanismo/planeamento-urbanistico/plano-diretor-municipal",
 };
- 
+
 // ----------------- DATA LAYER -----------------
 const TABLE = "propriedades";
 const COLUMNS = "id, created_at, designacao, concelho, freguesia, artigo, area, classificacao, score, status, data, pdm_ref";
- 
+
 const mapRow = (row) => ({
   id: row.id,
   createdAt: row.created_at,
@@ -69,7 +69,7 @@ const mapRow = (row) => ({
   data: row.data,
   pdmRef: row.pdm_ref,
 });
- 
+
 async function fetchPropriedades() {
   const { data, error } = await db
     .from(TABLE)
@@ -78,18 +78,18 @@ async function fetchPropriedades() {
   if (error) throw error;
   return (data ?? []).map(mapRow);
 }
- 
+
 async function insertPropriedade(form) {
   const today = new Date();
   const year = today.getFullYear();
   const seq = String(Math.floor(1000 + Math.random() * 9000));
   const concelhoSlug = (form.concelho || "XXX").slice(0, 3).toUpperCase().replace(/[^A-Z]/g, "X");
- 
+
   const baseScore = 55 + Math.floor(Math.random() * 35);
   const areaBonus = form.area > 10000 ? 5 : form.area < 500 ? -10 : 0;
   const score = Math.min(98, Math.max(20, baseScore + areaBonus));
   const status = score >= 60 ? "Analisado" : score >= 40 ? "Reservas" : "Inviável";
- 
+
   const payload = {
     id: `TC-${year}-${seq}`,
     designacao: form.designacao,
@@ -103,7 +103,7 @@ async function insertPropriedade(form) {
     data: today.toISOString().slice(0, 10),
     pdm_ref: `PDM-${concelhoSlug}-Rev${year}`,
   };
- 
+
   const { data, error } = await db
     .from(TABLE)
     .insert(payload)
@@ -112,11 +112,11 @@ async function insertPropriedade(form) {
   if (error) throw error;
   return mapRow(data);
 }
- 
+
 // ----------------- HELPERS -----------------
 const formatNumber = (n) =>
   n == null ? "—" : new Intl.NumberFormat("pt-PT").format(n);
- 
+
 const formatArea = (m2) => {
   if (m2 == null || m2 === 0) return "—";
   if (m2 >= 10000) {
@@ -125,14 +125,14 @@ const formatArea = (m2) => {
   }
   return `${formatNumber(m2)} m²`;
 };
- 
+
 const formatBytes = (bytes) => {
   if (!bytes) return "—";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 };
- 
+
 const scoreColor = (s) => {
   const v = s || 0;
   if (v >= 80) return { text: "text-emerald-700", bg: "bg-emerald-50", ring: "stroke-emerald-500", border: "border-emerald-300", rgb: [5, 150, 105] };
@@ -140,7 +140,7 @@ const scoreColor = (s) => {
   if (v >= 40) return { text: "text-amber-700", bg: "bg-amber-50", ring: "stroke-amber-500", border: "border-amber-300", rgb: [217, 119, 6] };
   return { text: "text-rose-700", bg: "bg-rose-50", ring: "stroke-rose-500", border: "border-rose-300", rgb: [225, 29, 72] };
 };
- 
+
 const statusBadge = (status) => {
   const map = {
     "Analisado": "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -150,7 +150,7 @@ const statusBadge = (status) => {
   };
   return map[status] || map["Pendente"];
 };
- 
+
 // ----------------- EXPORT UTILS -----------------
 function downloadBlob(content, filename, mime) {
   const blob = new Blob([content], { type: mime });
@@ -163,7 +163,7 @@ function downloadBlob(content, filename, mime) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
- 
+
 function exportCSV(rows) {
   const headers = ["ID", "Designação", "Concelho", "Freguesia", "Artigo", "Área (m²)", "Classificação", "Score", "Estado", "Data"];
   const escape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
@@ -175,18 +175,18 @@ function exportCSV(rows) {
   // BOM para Excel reconhecer UTF-8
   downloadBlob("﻿" + lines.join("\n"), `TerraCerta_carteira_${today}.csv`, "text/csv;charset=utf-8");
 }
- 
+
 function exportPropertyPDF(property) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const c = scoreColor(property.score);
   const today = new Date().toLocaleDateString("pt-PT");
- 
+
   // Header bar
   doc.setFillColor(6, 78, 59); // emerald-900
   doc.rect(0, 0, 210, 32, "F");
   doc.setFillColor(5, 150, 105); // emerald-600 accent
   doc.rect(0, 30, 210, 2, "F");
- 
+
   // Logo mark (square)
   doc.setFillColor(255, 255, 255);
   doc.roundedRect(15, 10, 12, 12, 1.5, 1.5, "F");
@@ -194,7 +194,7 @@ function exportPropertyPDF(property) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(14);
   doc.text("TC", 21, 18.5, { align: "center" });
- 
+
   // Logo type
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
@@ -204,13 +204,13 @@ function exportPropertyPDF(property) {
   doc.setFontSize(7);
   doc.setTextColor(167, 243, 208); // emerald-200
   doc.text("LAND VIABILITY INTELLIGENCE", 32, 22);
- 
+
   // Date right-aligned
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(8);
   doc.text(`Emitido em ${today}`, 195, 17, { align: "right" });
   doc.text(`Ref. ${property.id ?? "—"}`, 195, 22, { align: "right" });
- 
+
   // Title
   let y = 48;
   doc.setTextColor(15, 23, 42);
@@ -223,12 +223,12 @@ function exportPropertyPDF(property) {
   doc.setTextColor(71, 85, 105);
   doc.text(property.designacao || "—", 15, y);
   y += 8;
- 
+
   // Divider
   doc.setDrawColor(226, 232, 240);
   doc.line(15, y, 195, y);
   y += 8;
- 
+
   // Score card (right side)
   const scoreX = 145, scoreY = y;
   doc.setFillColor(...c.rgb);
@@ -240,14 +240,14 @@ function exportPropertyPDF(property) {
   doc.setFontSize(7);
   doc.setFont("helvetica", "normal");
   doc.text("HEALTH SCORE / 100", scoreX + 8, scoreY + 25);
- 
+
   // Identification block (left side)
   doc.setTextColor(100, 116, 139);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8);
   doc.text("IDENTIFICAÇÃO", 15, y + 2);
   y += 8;
- 
+
   const fields = [
     ["Concelho",       property.concelho],
     ["Freguesia",      property.freguesia],
@@ -258,7 +258,7 @@ function exportPropertyPDF(property) {
     ["Estado",         property.status],
     ["Data análise",   property.data],
   ];
- 
+
   doc.setFont("helvetica", "normal");
   fields.forEach(([k, v]) => {
     doc.setTextColor(100, 116, 139);
@@ -269,10 +269,10 @@ function exportPropertyPDF(property) {
     doc.text(String(v ?? "—"), 50, y);
     y += 6;
   });
- 
+
   y = Math.max(y, scoreY + 38);
   y += 5;
- 
+
   // PDM analysis section
   doc.setFillColor(241, 245, 249);
   doc.rect(15, y, 180, 8, "F");
@@ -281,7 +281,7 @@ function exportPropertyPDF(property) {
   doc.setFontSize(10);
   doc.text("Análise PDM · Cruzamento com camadas oficiais", 18, y + 5.5);
   y += 12;
- 
+
   const findings = [
     ["Classificação do solo", property.classificacao || "—", "OK", "PDM Art. 14º"],
     ["Categoria de espaço", "Espaço Agrícola de Produção (Tipo II)", "OK", "Planta Ordenamento"],
@@ -292,7 +292,7 @@ function exportPropertyPDF(property) {
     ["Servidão rodoviária", "Faixa non aedificandi 12m", "Atenção", "DL 13/94"],
     ["Risco de incêndio rural", "Classe Média", "OK", "ICNF"],
   ];
- 
+
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   findings.forEach((f, i) => {
@@ -311,9 +311,9 @@ function exportPropertyPDF(property) {
     doc.text(f[3], 195, y, { align: "right" });
     y += 6;
   });
- 
+
   y += 6;
- 
+
   // Recommendation block
   doc.setFillColor(236, 253, 245);
   doc.roundedRect(15, y, 180, 28, 2, 2, "F");
@@ -333,7 +333,7 @@ function exportPropertyPDF(property) {
         : "Inviabilidade nas condições atuais. Aguardar próxima revisão do PDM.";
   const wrapped = doc.splitTextToSize(recommendation, 170);
   doc.text(wrapped, 19, y + 13);
- 
+
   // Footer
   doc.setDrawColor(226, 232, 240);
   doc.line(15, 282, 195, 282);
@@ -341,10 +341,10 @@ function exportPropertyPDF(property) {
   doc.setFontSize(7);
   doc.text("© 2026 TerraCerta · Análise gerada automaticamente. Não substitui parecer técnico de arquiteto, engenheiro ou advogado especializado.", 15, 287);
   doc.text("Página 1 de 1", 195, 287, { align: "right" });
- 
+
   doc.save(`TerraCerta_${property.id ?? "relatorio"}.pdf`);
 }
- 
+
 // ----------------- LOGO -----------------
 const Logo = ({ size = "md", invert = false }) => {
   const dims = size === "lg" ? "h-9" : size === "sm" ? "h-6" : "h-7";
@@ -369,7 +369,7 @@ const Logo = ({ size = "md", invert = false }) => {
     </div>
   );
 };
- 
+
 // ----------------- IMMERSIVE LANDSCAPE BACKGROUND -----------------
 const LandscapeBackground = () => (
   <div className="absolute inset-0 overflow-hidden">
@@ -392,7 +392,7 @@ const LandscapeBackground = () => (
       .tc-cloud-c { animation: drift-slow 140s linear infinite -90s; }
       .tc-birds   { animation: fly-loop 60s linear infinite; }
     `}</style>
- 
+
     {/* Base landscape */}
     <svg
       viewBox="0 0 1920 1080"
@@ -432,10 +432,10 @@ const LandscapeBackground = () => (
           <stop offset="100%" stopColor="#a89255" />
         </linearGradient>
       </defs>
- 
+
       <rect width="1920" height="1080" fill="url(#bg-sky)" />
       <rect width="1920" height="1080" fill="url(#bg-sun)" />
- 
+
       {/* Mountain range */}
       <path d="M0,520 L120,470 L210,495 L320,440 L420,475 L540,420 L660,460 L780,430 L900,475 L1040,440 L1180,490 L1320,455 L1480,485 L1620,445 L1780,475 L1920,455 L1920,600 L0,600 Z" fill="url(#bg-mountains)" />
       {/* Far hills */}
@@ -472,7 +472,7 @@ const LandscapeBackground = () => (
       {/* Stone wall */}
       <path d="M0,855 Q500,840 1000,852 T1920,845" stroke="#5a4d33" strokeWidth="2.5" fill="none" opacity="0.4" />
     </svg>
- 
+
     {/* Animated clouds */}
     <svg className="absolute top-[8%] left-0 w-[20vw] max-w-[260px] tc-cloud-a opacity-90 pointer-events-none" viewBox="0 0 200 60">
       <g fill="white" opacity="0.85">
@@ -496,7 +496,7 @@ const LandscapeBackground = () => (
         <ellipse cx="135" cy="34" rx="22" ry="11" />
       </g>
     </svg>
- 
+
     {/* Animated birds */}
     <svg className="absolute top-[22%] left-0 w-[8vw] max-w-[120px] tc-birds opacity-70 pointer-events-none" viewBox="0 0 100 40" fill="none" stroke="#3a2818" strokeWidth="1.6">
       <path d="M5,20 q5,-7 10,0 q5,-7 10,0" />
@@ -504,20 +504,20 @@ const LandscapeBackground = () => (
       <path d="M55,18 q5,-7 10,0 q5,-7 10,0" />
       <path d="M80,26 q4,-6 8,0 q4,-6 8,0" />
     </svg>
- 
+
     {/* Vignette */}
     <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/30 pointer-events-none" />
     <div className="absolute inset-0 bg-gradient-to-r from-black/15 via-transparent to-transparent pointer-events-none" />
   </div>
 );
- 
+
 // ----------------- LOGIN PAGE -----------------
 const LoginPage = ({ onLogin }) => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
- 
+
   const handleLogin = (e) => {
     e?.preventDefault?.();
     setError(null);
@@ -534,11 +534,11 @@ const LoginPage = ({ onLogin }) => {
     setSubmitting(true);
     setTimeout(() => onLogin(normalisedEmail), 300);
   };
- 
+
   return (
     <div className="min-h-screen w-full relative overflow-hidden bg-slate-900">
       <LandscapeBackground />
- 
+
       <header className="absolute top-0 left-0 right-0 z-20 px-8 py-6 flex items-center justify-between">
         <Logo size="lg" invert />
         <div className="hidden md:flex items-center gap-5 text-xs text-white/85" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.35)" }}>
@@ -547,7 +547,7 @@ const LoginPage = ({ onLogin }) => {
           <span className="flex items-center gap-1.5"><Activity size={13} /> Atualização contínua</span>
         </div>
       </header>
- 
+
       <main className="relative z-10 min-h-screen flex items-center justify-center px-4">
         <div className="w-full max-w-[420px] bg-white rounded-lg shadow-2xl border border-white/40 overflow-hidden">
           <div className="h-1 bg-gradient-to-r from-emerald-500 via-emerald-600 to-emerald-700" />
@@ -556,7 +556,7 @@ const LoginPage = ({ onLogin }) => {
               <h1 className="text-[22px] font-semibold text-slate-900 tracking-tight">Iniciar sessão</h1>
               <p className="text-sm text-slate-500 mt-1">Acesso restrito · plataforma TerraCerta</p>
             </div>
- 
+
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
                 <label className="text-[11px] font-medium text-slate-700 uppercase tracking-wider">Email profissional</label>
@@ -573,7 +573,7 @@ const LoginPage = ({ onLogin }) => {
                   />
                 </div>
               </div>
- 
+
               <div>
                 <div className="flex items-center justify-between">
                   <label className="text-[11px] font-medium text-slate-700 uppercase tracking-wider">Palavra-passe</label>
@@ -592,19 +592,19 @@ const LoginPage = ({ onLogin }) => {
                   />
                 </div>
               </div>
- 
+
               <label className="flex items-center gap-2 text-xs text-slate-600 select-none cursor-pointer">
                 <input type="checkbox" defaultChecked className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" />
                 Manter sessão iniciada neste dispositivo
               </label>
- 
+
               {error && (
                 <div className="flex items-start gap-2 p-3 bg-rose-50 border border-rose-200 rounded-md text-xs text-rose-700 leading-relaxed">
                   <AlertCircle size={14} className="shrink-0 mt-0.5" />
                   <span>{error}</span>
                 </div>
               )}
- 
+
               <button
                 type="submit"
                 disabled={submitting}
@@ -616,16 +616,16 @@ const LoginPage = ({ onLogin }) => {
                   <>Entrar na plataforma <ArrowRight size={15} className="group-hover:translate-x-0.5 transition" /></>
                 )}
               </button>
- 
+
               <div className="relative my-4">
                 <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200"></div></div>
                 <div className="relative flex justify-center text-xs"><span className="bg-white px-3 text-slate-400">ou</span></div>
               </div>
- 
+
               <button type="button" className="w-full border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-medium py-2.5 rounded-md transition flex items-center justify-center gap-2">
                 <span className="text-base">🇵🇹</span> Autenticação Chave Móvel Digital
               </button>
- 
+
               <p className="text-xs text-slate-500 text-center pt-3">
                 Sem conta? <button type="button" className="text-emerald-700 hover:text-emerald-800 font-medium">Solicitar acesso piloto</button>
               </p>
@@ -639,7 +639,7 @@ const LoginPage = ({ onLogin }) => {
     </div>
   );
 };
- 
+
 // ----------------- TOP BAR -----------------
 const TopBar = ({ user, currentPage, onLogout, onNavigate }) => {
   const initials = (user || "JL").split("@")[0].slice(0, 2).toUpperCase();
@@ -678,7 +678,7 @@ const TopBar = ({ user, currentPage, onLogout, onNavigate }) => {
     </header>
   );
 };
- 
+
 // ----------------- DASHBOARD -----------------
 const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelect, onLogout, onNavigate }) => {
   const [filter, setFilter] = useState("");
@@ -687,17 +687,17 @@ const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelec
     p.concelho?.toLowerCase().includes(filter.toLowerCase()) ||
     p.id?.toLowerCase().includes(filter.toLowerCase())
   );
- 
+
   const totalArea = properties.reduce((s, p) => s + (p.area || 0), 0);
   const avgScore = properties.length
     ? Math.round(properties.reduce((s, p) => s + (p.score || 0), 0) / properties.length)
     : 0;
   const viable = properties.filter(p => (p.score || 0) >= 60).length;
- 
+
   return (
     <div className="min-h-screen bg-slate-50">
       <TopBar user={user} currentPage="dashboard" onLogout={onLogout} onNavigate={onNavigate} />
- 
+
       <main className="px-6 py-6 max-w-[1500px] mx-auto">
         <div className="flex items-end justify-between mb-6">
           <div>
@@ -720,7 +720,7 @@ const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelec
             </button>
           </div>
         </div>
- 
+
         {error && (
           <div className="mb-4 flex items-start gap-2 p-3 bg-rose-50 border border-rose-200 rounded-md text-sm text-rose-700">
             <AlertCircle size={16} className="shrink-0 mt-0.5" />
@@ -730,7 +730,7 @@ const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelec
             </div>
           </div>
         )}
- 
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-slate-200 border border-slate-200 rounded-md overflow-hidden mb-6">
           {[
             { label: "Terrenos em carteira", value: loading ? "…" : properties.length, sub: "atualizado agora", icon: Layers, accent: "text-slate-900" },
@@ -748,7 +748,7 @@ const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelec
             </div>
           ))}
         </div>
- 
+
         <div className="bg-white border border-slate-200 rounded-t-md px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-md">
             <div className="relative flex-1">
@@ -766,7 +766,7 @@ const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelec
           </div>
           <div className="text-xs text-slate-500">{filtered.length} de {properties.length} terrenos</div>
         </div>
- 
+
         <div className="bg-white border border-slate-200 border-t-0 rounded-b-md overflow-hidden">
           {loading ? (
             <div className="py-16 flex flex-col items-center justify-center text-slate-400">
@@ -857,7 +857,7 @@ const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelec
     </div>
   );
 };
- 
+
 // ----------------- ANALYSIS PROGRESS OVERLAY -----------------
 const ANALYSIS_STEPS = [
   { msg: "A aceder ao servidor SNIT...", icon: Satellite },
@@ -869,12 +869,12 @@ const ANALYSIS_STEPS = [
 ];
 const STEP_DURATION_MS = 8000;
 const TOTAL_DURATION_MS = 55000;
- 
+
 const AnalysisOverlay = ({ form, onDone, onError }) => {
   const [stepIdx, setStepIdx] = useState(0);
   const [progress, setProgress] = useState(0);
   const startedRef = useRef(false);
- 
+
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
@@ -885,7 +885,7 @@ const AnalysisOverlay = ({ form, onDone, onError }) => {
       setStepIdx(idx);
       setProgress(Math.min((elapsed / TOTAL_DURATION_MS) * 100, 100));
     }, 120);
- 
+
     const finish = setTimeout(async () => {
       clearInterval(tick);
       setProgress(100);
@@ -897,16 +897,16 @@ const AnalysisOverlay = ({ form, onDone, onError }) => {
         onError(e?.message ?? "Erro ao gravar a análise.");
       }
     }, TOTAL_DURATION_MS);
- 
+
     return () => { clearInterval(tick); clearTimeout(finish); };
   }, []);
- 
+
   const Icon = ANALYSIS_STEPS[stepIdx].icon;
- 
+
   return (
     <div className="fixed inset-0 z-50 bg-gradient-to-br from-slate-50 via-white to-emerald-50/30 flex flex-col items-center justify-center p-6">
       <div className="absolute top-8 left-8"><Logo size="md" /></div>
- 
+
       <div className="w-full max-w-xl text-center">
         <div className="relative mx-auto mb-8 w-24 h-24">
           <div className="absolute inset-0 rounded-full bg-emerald-100 animate-ping opacity-30" />
@@ -928,14 +928,14 @@ const AnalysisOverlay = ({ form, onDone, onError }) => {
             />
           </svg>
         </div>
- 
+
         <div className="text-[11px] uppercase tracking-[0.25em] text-slate-500 font-medium mb-2">
           Análise em curso · {Math.round(progress)}%
         </div>
         <div className="text-2xl font-semibold text-slate-900 tracking-tight min-h-[2.5rem] transition-all">
           {ANALYSIS_STEPS[stepIdx].msg}
         </div>
- 
+
         <div className="mt-8 mx-auto max-w-md">
           <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
             <div
@@ -948,7 +948,7 @@ const AnalysisOverlay = ({ form, onDone, onError }) => {
             <span>0:55</span>
           </div>
         </div>
- 
+
         <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 max-w-lg mx-auto text-left">
           {ANALYSIS_STEPS.map((s, i) => {
             const done = i < stepIdx;
@@ -969,7 +969,7 @@ const AnalysisOverlay = ({ form, onDone, onError }) => {
             );
           })}
         </div>
- 
+
         <div className="mt-10 text-[11px] text-slate-400">
           A processar terreno <span className="font-medium text-slate-600">{form.designacao}</span>
           {form.concelho && <> · {form.concelho}</>}
@@ -978,7 +978,7 @@ const AnalysisOverlay = ({ form, onDone, onError }) => {
     </div>
   );
 };
- 
+
 // ----------------- UPLOAD / NEW PROPERTY -----------------
 const FileDropzone = ({ doc, file, onPick, onRemove }) => {
   const inputRef = useRef(null);
@@ -1033,7 +1033,7 @@ const FileDropzone = ({ doc, file, onPick, onRemove }) => {
     </div>
   );
 };
- 
+
 const UploadPage = ({ user, onCancel, onAnalyseDone, onLogout, onNavigate }) => {
   const [files, setFiles] = useState({ caderneta: null, planta: null, certidao: null });
   const [form, setForm] = useState({
@@ -1041,24 +1041,24 @@ const UploadPage = ({ user, onCancel, onAnalyseDone, onLogout, onNavigate }) => 
   });
   const [analysing, setAnalysing] = useState(false);
   const [insertError, setInsertError] = useState(null);
- 
+
   const updateForm = (k, v) => setForm(f => {
     const next = { ...f, [k]: v };
     if (k === "concelho") next.freguesia = ""; // reset freguesia quando muda concelho
     return next;
   });
- 
+
   const formValid = form.designacao.trim() && form.concelho && form.freguesia
     && form.artigo.trim() && form.area && form.classificacao;
   const allUploaded = files.caderneta && files.planta && files.certidao;
   const canAnalyse = formValid && allUploaded;
- 
+
   const docs = [
     { key: "caderneta", title: "Caderneta Predial", subtitle: "Documento das Finanças (Modelo 1)", icon: FileText, hint: "PDF · até 10MB" },
     { key: "planta", title: "Planta de Localização", subtitle: "Câmara Municipal · escala 1:2000 ou superior", icon: MapPin, hint: "PDF / DWG / DXF" },
     { key: "certidao", title: "Certidão Permanente", subtitle: "Conservatória do Registo Predial", icon: FileCheck, hint: "PDF · código de acesso aceite" },
   ];
- 
+
   if (analysing) {
     return (
       <AnalysisOverlay
@@ -1068,13 +1068,13 @@ const UploadPage = ({ user, onCancel, onAnalyseDone, onLogout, onNavigate }) => 
       />
     );
   }
- 
+
   const freguesiasDisponiveis = form.concelho ? FREGUESIAS[form.concelho] || [] : [];
- 
+
   return (
     <div className="min-h-screen bg-slate-50">
       <TopBar user={user} currentPage="upload" onLogout={onLogout} onNavigate={onNavigate} />
- 
+
       <main className="px-6 py-8 max-w-4xl mx-auto">
         <div className="mb-6">
           <button onClick={onCancel} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 mb-3">
@@ -1087,7 +1087,7 @@ const UploadPage = ({ user, onCancel, onAnalyseDone, onLogout, onNavigate }) => 
             A análise demora ~55 segundos a concluir.
           </p>
         </div>
- 
+
         {insertError && (
           <div className="mb-4 flex items-start gap-2 p-3 bg-rose-50 border border-rose-200 rounded-md text-sm text-rose-700">
             <AlertCircle size={16} className="shrink-0 mt-0.5" />
@@ -1097,7 +1097,7 @@ const UploadPage = ({ user, onCancel, onAnalyseDone, onLogout, onNavigate }) => 
             </div>
           </div>
         )}
- 
+
         <div className="bg-white border border-slate-200 rounded-md p-5 mb-4">
           <div className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-4">Dados do terreno</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1171,7 +1171,7 @@ const UploadPage = ({ user, onCancel, onAnalyseDone, onLogout, onNavigate }) => 
             </div>
           </div>
         </div>
- 
+
         <div className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-3 px-1">Documentação de suporte</div>
         <div className="space-y-3">
           {docs.map((d) => (
@@ -1184,7 +1184,7 @@ const UploadPage = ({ user, onCancel, onAnalyseDone, onLogout, onNavigate }) => 
             />
           ))}
         </div>
- 
+
         <div className="mt-6 bg-white border border-slate-200 rounded-md p-4">
           <div className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-3">Parâmetros de análise</div>
           <div className="grid grid-cols-2 gap-4 text-sm">
@@ -1194,7 +1194,7 @@ const UploadPage = ({ user, onCancel, onAnalyseDone, onLogout, onNavigate }) => 
             <label className="flex items-center gap-2"><input type="checkbox" className="rounded text-emerald-600" /> Estimativa de valor de mercado (β)</label>
           </div>
         </div>
- 
+
         <div className="mt-6 flex items-center justify-between">
           <div className="text-xs text-slate-500 flex items-center gap-1.5">
             <Shield size={12} /> Documentos cifrados em repouso · removidos após 90 dias
@@ -1212,7 +1212,7 @@ const UploadPage = ({ user, onCancel, onAnalyseDone, onLogout, onNavigate }) => 
             </button>
           </div>
         </div>
- 
+
         {!canAnalyse && (
           <div className="mt-3 text-right text-[11px] text-slate-400">
             {!formValid && "Preencha todos os campos obrigatórios. "}
@@ -1223,14 +1223,14 @@ const UploadPage = ({ user, onCancel, onAnalyseDone, onLogout, onNavigate }) => 
     </div>
   );
 };
- 
+
 // ----------------- SIG / MAP PAGE -----------------
 const SIGPage = ({ user, properties, onLogout, onNavigate }) => {
   const [layers, setLayers] = useState({
     pdm: true, ren: false, ran: false, prot: false, hidrografia: false, riscos: false,
   });
   const [bbox, setBbox] = useState("-10.0,36.5,-6.0,42.5"); // Portugal continental
- 
+
   const layerList = [
     { key: "pdm", label: "PDM municipais", count: 308 },
     { key: "ren", label: "Reserva Ecológica Nacional", count: 1 },
@@ -1239,7 +1239,7 @@ const SIGPage = ({ user, properties, onLogout, onNavigate }) => {
     { key: "hidrografia", label: "Rede hidrográfica", count: 1 },
     { key: "riscos", label: "Riscos naturais (incêndio)", count: 1 },
   ];
- 
+
   const presets = [
     { label: "Portugal", bbox: "-10.0,36.5,-6.0,42.5" },
     { label: "Lisboa", bbox: "-9.30,38.65,-9.05,38.85" },
@@ -1247,11 +1247,11 @@ const SIGPage = ({ user, properties, onLogout, onNavigate }) => {
     { label: "Sintra", bbox: "-9.55,38.75,-9.30,38.92" },
     { label: "Oeiras", bbox: "-9.40,38.65,-9.20,38.78" },
   ];
- 
+
   return (
     <div className="min-h-screen bg-slate-50">
       <TopBar user={user} currentPage="sig" onLogout={onLogout} onNavigate={onNavigate} />
- 
+
       <main className="px-6 py-6 max-w-[1500px] mx-auto">
         <div className="flex items-end justify-between mb-5">
           <div>
@@ -1275,7 +1275,7 @@ const SIGPage = ({ user, properties, onLogout, onNavigate }) => {
             ))}
           </div>
         </div>
- 
+
         <div className="grid grid-cols-12 gap-4">
           <aside className="col-span-12 lg:col-span-3 space-y-4">
             <div className="bg-white border border-slate-200 rounded-md p-4">
@@ -1305,7 +1305,7 @@ const SIGPage = ({ user, properties, onLogout, onNavigate }) => {
                 ))}
               </div>
             </div>
- 
+
             <div className="bg-white border border-slate-200 rounded-md p-4">
               <h3 className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-3 flex items-center gap-2">
                 <Globe2 size={13} /> Resumo
@@ -1325,13 +1325,13 @@ const SIGPage = ({ user, properties, onLogout, onNavigate }) => {
                 </div>
               </dl>
             </div>
- 
+
             <div className="bg-emerald-50 border border-emerald-200 rounded-md p-4 text-xs text-emerald-800 leading-relaxed">
               <Info size={14} className="inline mr-1 -mt-0.5" />
               As camadas selecionadas serão sobrepostas no mapa quando a integração WMS DGT estiver disponível.
             </div>
           </aside>
- 
+
           <div className="col-span-12 lg:col-span-9 bg-white border border-slate-200 rounded-md overflow-hidden">
             <iframe
               key={bbox}
@@ -1356,7 +1356,7 @@ const SIGPage = ({ user, properties, onLogout, onNavigate }) => {
     </div>
   );
 };
- 
+
 // ----------------- HEALTH SCORE GAUGE -----------------
 const HealthGauge = ({ score }) => {
   const c = scoreColor(score);
@@ -1385,12 +1385,12 @@ const HealthGauge = ({ score }) => {
     </div>
   );
 };
- 
+
 // ----------------- ANALYSIS PAGE -----------------
 const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavigate }) => {
   const c = scoreColor(property.score);
   const pdmLink = PDM_LINKS[property.concelho] || "https://www.dgterritorio.gov.pt/";
- 
+
   const pdmFindings = [
     { label: "Classificação do solo", value: property.classificacao, status: "ok", source: "PDM Art. 14º" },
     { label: "Categoria de espaço", value: "Espaço Agrícola de Produção (Tipo II)", status: (property.score || 0) >= 60 ? "ok" : "warn", source: "Planta de Ordenamento" },
@@ -1402,13 +1402,13 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
     { label: "Servidão rodoviária", value: "Faixa non aedificandi 12m (EN229)", status: "warn", source: "DL 13/94" },
     { label: "Risco de incêndio rural", value: "Classe Média", status: "ok", source: "ICNF · Carta 2025" },
   ];
- 
+
   const conversionScore = Math.max(15, (property.score || 0) - 22);
- 
+
   return (
     <div className="min-h-screen bg-slate-50">
       <TopBar user={user} currentPage="analysis" onLogout={onLogout} onNavigate={onNavigate} />
- 
+
       <main className="px-6 py-6 max-w-[1400px] mx-auto">
         <div className="mb-5">
           <button onClick={onBack} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 mb-3">
@@ -1450,7 +1450,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
             </div>
           </div>
         </div>
- 
+
         {page === 1 ? (
           <div className="grid grid-cols-12 gap-4">
             <div className="col-span-12 lg:col-span-4 space-y-4">
@@ -1463,7 +1463,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
                   Score calculado com base em 14 indicadores do PDM, condicionantes legais e camadas oficiais do território.
                 </p>
               </div>
- 
+
               <div className="bg-white border border-slate-200 rounded-md">
                 <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
                   <span className="text-[11px] uppercase tracking-wider text-slate-500 font-medium">Dados extraídos</span>
@@ -1487,7 +1487,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
                 </dl>
               </div>
             </div>
- 
+
             <div className="col-span-12 lg:col-span-8 space-y-4">
               <div className="bg-white border border-slate-200 rounded-md">
                 <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
@@ -1502,7 +1502,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
                   </div>
                   <div className="text-xs text-slate-400">Fonte oficial DGT</div>
                 </div>
- 
+
                 <div className="divide-y divide-slate-100">
                   {pdmFindings.map((f, i) => {
                     const Icon = f.status === "ok" ? CheckCircle : f.status === "warn" ? AlertTriangle : XCircle;
@@ -1519,7 +1519,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
                     );
                   })}
                 </div>
- 
+
                 <div className="bg-slate-50 px-5 py-3 border-t border-slate-200 flex items-center justify-between text-xs">
                   <div className="flex items-center gap-4 text-slate-500">
                     <span className="flex items-center gap-1"><CheckCircle size={11} className="text-emerald-600" /> 5 conformes</span>
@@ -1536,7 +1536,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
                   </a>
                 </div>
               </div>
- 
+
               <div className="bg-white border border-slate-200 rounded-md p-5">
                 <h3 className="font-semibold text-slate-900 text-sm mb-3 flex items-center gap-2">
                   <Sparkles size={14} className="text-emerald-700" />
@@ -1549,7 +1549,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
                   <li className="flex gap-3"><span className="text-emerald-700 font-mono text-xs mt-0.5">04</span><span>O PDM tem <strong>3ª Alteração por Adaptação</strong> em vigor desde 12/03/2025 — recomenda-se confirmar versão.</span></li>
                 </ul>
               </div>
- 
+
               <div className="flex justify-end">
                 <button
                   onClick={() => setPage(2)}
@@ -1570,7 +1570,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
                     Simulação baseada nos critérios do RJIGT (DL 80/2015) e nas dinâmicas territoriais do concelho.
                   </p>
                 </div>
- 
+
                 <div className="p-5 grid grid-cols-3 gap-px bg-slate-200 border border-slate-200 rounded-md overflow-hidden">
                   {[
                     { label: "Probabilidade conversão", value: `${conversionScore}%`, sub: "horizonte 5-7 anos", color: scoreColor(conversionScore).text },
@@ -1584,7 +1584,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
                     </div>
                   ))}
                 </div>
- 
+
                 <div className="px-5 pb-5">
                   <h3 className="text-xs uppercase tracking-wider text-slate-500 font-medium mt-5 mb-3">Análise dos requisitos legais (RJIGT)</h3>
                   <div className="border border-slate-200 rounded-md divide-y divide-slate-100">
@@ -1610,7 +1610,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
                   </div>
                 </div>
               </div>
- 
+
               <div className="bg-white border border-slate-200 rounded-md p-5">
                 <h3 className="font-semibold text-slate-900 text-sm mb-1">Impacto no valor (cenário comparativo)</h3>
                 <p className="text-xs text-slate-500 mb-4">Estimativa baseada em transações comparáveis na região (INE / Autoridade Tributária 2024).</p>
@@ -1629,7 +1629,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
                 </div>
               </div>
             </div>
- 
+
             <div className="col-span-12 lg:col-span-4 space-y-4">
               <div className="bg-white border border-slate-200 rounded-md p-5">
                 <div className="flex items-center justify-between mb-3">
@@ -1645,7 +1645,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
                   <span>0</span><span>50</span><span>100</span>
                 </div>
               </div>
- 
+
               <div className="bg-white border border-slate-200 rounded-md p-5">
                 <h3 className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-3">Próximos passos sugeridos</h3>
                 <ol className="space-y-3 text-sm text-slate-700">
@@ -1654,7 +1654,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
                   <li className="flex gap-3"><span className="h-5 w-5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold flex items-center justify-center shrink-0">3</span><span>Acompanhar próxima revisão do PDM (período sondagem prevista 2027).</span></li>
                 </ol>
               </div>
- 
+
               <button
                 onClick={() => exportPropertyPDF(property)}
                 className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-3 rounded-md flex items-center justify-center gap-2 shadow-sm transition"
@@ -1664,14 +1664,14 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
               <button className="w-full border border-slate-200 hover:bg-slate-50 text-slate-700 text-sm font-medium py-2.5 rounded-md flex items-center justify-center gap-2 transition">
                 <FileText size={14} /> Partilhar com cliente
               </button>
- 
+
               <div className="text-[11px] text-slate-400 leading-relaxed px-1">
                 <Info size={11} className="inline mr-1" />
                 Análise gerada automaticamente. Não substitui parecer técnico
                 de arquiteto, engenheiro ou advogado especializado.
               </div>
             </div>
- 
+
             <div className="col-span-12 flex justify-between">
               <button
                 onClick={() => setPage(1)}
@@ -1692,18 +1692,18 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavig
     </div>
   );
 };
- 
+
 // ----------------- ROOT -----------------
 export default function App() {
   const [page, setPage] = useState("login");
   const [user, setUser] = useState(null);
   const [selected, setSelected] = useState(null);
   const [analysisPage, setAnalysisPage] = useState(1);
- 
+
   const [properties, setProperties] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
- 
+
   const loadProperties = async () => {
     setLoading(true);
     setError(null);
@@ -1717,31 +1717,31 @@ export default function App() {
       setLoading(false);
     }
   };
- 
+
   useEffect(() => {
     if (page === "dashboard" || page === "sig") loadProperties();
   }, [page]);
- 
+
   const handleLogin = (email) => {
     setUser(email);
     setPage("dashboard");
   };
- 
+
   const handleLogout = () => {
     setUser(null);
     setSelected(null);
     setProperties([]);
     setPage("login");
   };
- 
+
   const handleNavigate = (target) => {
     if (target === "dashboard" || target === "sig" || target === "upload") {
       setPage(target);
     }
   };
- 
+
   if (page === "login") return <LoginPage onLogin={handleLogin} />;
- 
+
   if (page === "dashboard") return (
     <Dashboard
       user={user}
@@ -1755,7 +1755,7 @@ export default function App() {
       onNavigate={handleNavigate}
     />
   );
- 
+
   if (page === "upload") return (
     <UploadPage
       user={user}
@@ -1765,7 +1765,7 @@ export default function App() {
       onNavigate={handleNavigate}
     />
   );
- 
+
   if (page === "sig") return (
     <SIGPage
       user={user}
@@ -1774,7 +1774,7 @@ export default function App() {
       onNavigate={handleNavigate}
     />
   );
- 
+
   if (page === "analysis" && selected) return (
     <AnalysisPage
       user={user}
@@ -1786,5 +1786,6 @@ export default function App() {
       onNavigate={handleNavigate}
     />
   );
- 
+
   return null;
+}
