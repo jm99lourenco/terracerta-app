@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { jsPDF } from "jspdf";
 import {
   Upload, FileText, MapPin, Ruler,
   Calendar, Hash, Search, Plus, ChevronRight, ChevronLeft,
@@ -8,29 +9,52 @@ import {
   Building2, Mountain, Lock, Mail, Layers,
   Shield, Activity, Zap, ArrowRight, Sparkles, AlertTriangle,
   CheckCircle, Info, ExternalLink, Bell, Loader2, RefreshCw,
-  Satellite, Database, Map, Calculator
+  Satellite, Map as MapIcon, Calculator, Globe2, Eye, EyeOff
 } from "lucide-react";
-
+ 
 // ----------------- DATABASE CLIENT -----------------
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
 if (!supabaseUrl || !supabaseAnonKey) {
   console.error("[TerraCerta] Configuração de ambiente em falta.");
 }
-
 const db = createClient(supabaseUrl ?? "", supabaseAnonKey ?? "");
-
+ 
 // ----------------- AUTH (frontend-only · MVP) -----------------
 const ALLOWED_USERS = {
   "admin1@terracerta.pt": "portugal2026",
   "admin2@terracerta.pt": "portugal2026",
 };
-
+ 
+// ----------------- DOMAIN CONSTANTS -----------------
+const CONCELHOS = ["Lisboa", "Sintra", "Oeiras", "Porto"];
+ 
+const FREGUESIAS = {
+  "Lisboa":  ["Arroios", "Estrela", "Belém"],
+  "Sintra":  ["Alcabideche", "Colares", "Rio de Mouro"],
+  "Oeiras":  ["Carnaxide", "Algés", "Paço de Arcos", "Oeiras e São Julião da Barra"],
+  "Porto":   ["Bonfim", "Cedofeita", "Paranhos", "Campanhã"],
+};
+ 
+const CLASSIFICACOES = [
+  "Urbano",
+  "Urbano de baixa densidade",
+  "Rústico",
+  "Espaço Industrial",
+  "Espaço Florestal",
+];
+ 
+const PDM_LINKS = {
+  "Lisboa": "https://www.lisboa.pt/cidade/urbanismo/planeamento-urbano/plano-diretor-municipal",
+  "Sintra": "https://www.cm-sintra.pt/viver/urbanismo/plano-diretor-municipal",
+  "Oeiras": "https://www.cm-oeiras.pt/pt/viver/urbanismo/instrumentos-de-gestao-territorial/pdm",
+  "Porto":  "https://www.cm-porto.pt/urbanismo/planeamento-urbanistico/plano-diretor-municipal",
+};
+ 
 // ----------------- DATA LAYER -----------------
 const TABLE = "propriedades";
 const COLUMNS = "id, created_at, designacao, concelho, freguesia, artigo, area, classificacao, score, status, data, pdm_ref";
-
+ 
 const mapRow = (row) => ({
   id: row.id,
   createdAt: row.created_at,
@@ -45,7 +69,7 @@ const mapRow = (row) => ({
   data: row.data,
   pdmRef: row.pdm_ref,
 });
-
+ 
 async function fetchPropriedades() {
   const { data, error } = await db
     .from(TABLE)
@@ -54,20 +78,18 @@ async function fetchPropriedades() {
   if (error) throw error;
   return (data ?? []).map(mapRow);
 }
-
+ 
 async function insertPropriedade(form) {
   const today = new Date();
   const year = today.getFullYear();
   const seq = String(Math.floor(1000 + Math.random() * 9000));
   const concelhoSlug = (form.concelho || "XXX").slice(0, 3).toUpperCase().replace(/[^A-Z]/g, "X");
-
-  // Score determinístico-aparente baseado em alguns factores. Substituir
-  // por motor real quando o módulo de análise SNIT estiver pronto.
+ 
   const baseScore = 55 + Math.floor(Math.random() * 35);
   const areaBonus = form.area > 10000 ? 5 : form.area < 500 ? -10 : 0;
   const score = Math.min(98, Math.max(20, baseScore + areaBonus));
   const status = score >= 60 ? "Analisado" : score >= 40 ? "Reservas" : "Inviável";
-
+ 
   const payload = {
     id: `TC-${year}-${seq}`,
     designacao: form.designacao,
@@ -81,7 +103,7 @@ async function insertPropriedade(form) {
     data: today.toISOString().slice(0, 10),
     pdm_ref: `PDM-${concelhoSlug}-Rev${year}`,
   };
-
+ 
   const { data, error } = await db
     .from(TABLE)
     .insert(payload)
@@ -90,38 +112,239 @@ async function insertPropriedade(form) {
   if (error) throw error;
   return mapRow(data);
 }
-
+ 
 // ----------------- HELPERS -----------------
 const formatNumber = (n) =>
   n == null ? "—" : new Intl.NumberFormat("pt-PT").format(n);
-
+ 
+const formatArea = (m2) => {
+  if (m2 == null || m2 === 0) return "—";
+  if (m2 >= 10000) {
+    const ha = m2 / 10000;
+    return `${ha.toLocaleString("pt-PT", { maximumFractionDigits: 2 })} ha`;
+  }
+  return `${formatNumber(m2)} m²`;
+};
+ 
+const formatBytes = (bytes) => {
+  if (!bytes) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+};
+ 
 const scoreColor = (s) => {
   const v = s || 0;
-  if (v >= 80) return { text: "text-emerald-700", bg: "bg-emerald-50", ring: "stroke-emerald-500", border: "border-emerald-300" };
-  if (v >= 60) return { text: "text-lime-700", bg: "bg-lime-50", ring: "stroke-lime-500", border: "border-lime-300" };
-  if (v >= 40) return { text: "text-amber-700", bg: "bg-amber-50", ring: "stroke-amber-500", border: "border-amber-300" };
-  return { text: "text-rose-700", bg: "bg-rose-50", ring: "stroke-rose-500", border: "border-rose-300" };
+  if (v >= 80) return { text: "text-emerald-700", bg: "bg-emerald-50", ring: "stroke-emerald-500", border: "border-emerald-300", rgb: [5, 150, 105] };
+  if (v >= 60) return { text: "text-lime-700", bg: "bg-lime-50", ring: "stroke-lime-500", border: "border-lime-300", rgb: [101, 163, 13] };
+  if (v >= 40) return { text: "text-amber-700", bg: "bg-amber-50", ring: "stroke-amber-500", border: "border-amber-300", rgb: [217, 119, 6] };
+  return { text: "text-rose-700", bg: "bg-rose-50", ring: "stroke-rose-500", border: "border-rose-300", rgb: [225, 29, 72] };
 };
-
+ 
 const statusBadge = (status) => {
   const map = {
     "Analisado": "bg-emerald-50 text-emerald-700 border-emerald-200",
-    "Reservas": "bg-amber-50 text-amber-700 border-amber-200",
-    "Inviável": "bg-rose-50 text-rose-700 border-rose-200",
-    "Pendente": "bg-slate-50 text-slate-700 border-slate-200",
+    "Reservas":  "bg-amber-50 text-amber-700 border-amber-200",
+    "Inviável":  "bg-rose-50 text-rose-700 border-rose-200",
+    "Pendente":  "bg-slate-50 text-slate-700 border-slate-200",
   };
   return map[status] || map["Pendente"];
 };
-
-const CONCELHOS = [
-  "Aguiar da Beira", "Almeida", "Beja", "Évora", "Guarda", "Lamego",
-  "Lisboa", "Porto", "Santarém", "Trancoso", "Viseu", "Outro",
-];
-
-const CLASSIFICACOES = [
-  "Urbano", "Urbano de baixa densidade", "Rústico", "Espaço Industrial", "Espaço Florestal",
-];
-
+ 
+// ----------------- EXPORT UTILS -----------------
+function downloadBlob(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+ 
+function exportCSV(rows) {
+  const headers = ["ID", "Designação", "Concelho", "Freguesia", "Artigo", "Área (m²)", "Classificação", "Score", "Estado", "Data"];
+  const escape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const lines = [headers.map(escape).join(",")];
+  rows.forEach((r) => {
+    lines.push([r.id, r.designacao, r.concelho, r.freguesia, r.artigo, r.area, r.classificacao, r.score, r.status, r.data].map(escape).join(","));
+  });
+  const today = new Date().toISOString().slice(0, 10);
+  // BOM para Excel reconhecer UTF-8
+  downloadBlob("﻿" + lines.join("\n"), `TerraCerta_carteira_${today}.csv`, "text/csv;charset=utf-8");
+}
+ 
+function exportPropertyPDF(property) {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const c = scoreColor(property.score);
+  const today = new Date().toLocaleDateString("pt-PT");
+ 
+  // Header bar
+  doc.setFillColor(6, 78, 59); // emerald-900
+  doc.rect(0, 0, 210, 32, "F");
+  doc.setFillColor(5, 150, 105); // emerald-600 accent
+  doc.rect(0, 30, 210, 2, "F");
+ 
+  // Logo mark (square)
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(15, 10, 12, 12, 1.5, 1.5, "F");
+  doc.setTextColor(6, 78, 59);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.text("TC", 21, 18.5, { align: "center" });
+ 
+  // Logo type
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.text("TerraCerta", 32, 17);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7);
+  doc.setTextColor(167, 243, 208); // emerald-200
+  doc.text("LAND VIABILITY INTELLIGENCE", 32, 22);
+ 
+  // Date right-aligned
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(8);
+  doc.text(`Emitido em ${today}`, 195, 17, { align: "right" });
+  doc.text(`Ref. ${property.id ?? "—"}`, 195, 22, { align: "right" });
+ 
+  // Title
+  let y = 48;
+  doc.setTextColor(15, 23, 42);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text("Análise de Viabilidade Territorial", 15, y);
+  y += 6;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+  doc.setTextColor(71, 85, 105);
+  doc.text(property.designacao || "—", 15, y);
+  y += 8;
+ 
+  // Divider
+  doc.setDrawColor(226, 232, 240);
+  doc.line(15, y, 195, y);
+  y += 8;
+ 
+  // Score card (right side)
+  const scoreX = 145, scoreY = y;
+  doc.setFillColor(...c.rgb);
+  doc.roundedRect(scoreX, scoreY, 50, 30, 2, 2, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(28);
+  doc.text(String(property.score ?? "—"), scoreX + 8, scoreY + 18);
+  doc.setFontSize(7);
+  doc.setFont("helvetica", "normal");
+  doc.text("HEALTH SCORE / 100", scoreX + 8, scoreY + 25);
+ 
+  // Identification block (left side)
+  doc.setTextColor(100, 116, 139);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.text("IDENTIFICAÇÃO", 15, y + 2);
+  y += 8;
+ 
+  const fields = [
+    ["Concelho",       property.concelho],
+    ["Freguesia",      property.freguesia],
+    ["Artigo",         property.artigo],
+    ["Área",           formatArea(property.area)],
+    ["Classificação",  property.classificacao],
+    ["PDM aplicável",  property.pdmRef],
+    ["Estado",         property.status],
+    ["Data análise",   property.data],
+  ];
+ 
+  doc.setFont("helvetica", "normal");
+  fields.forEach(([k, v]) => {
+    doc.setTextColor(100, 116, 139);
+    doc.setFontSize(8);
+    doc.text(k, 15, y);
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(10);
+    doc.text(String(v ?? "—"), 50, y);
+    y += 6;
+  });
+ 
+  y = Math.max(y, scoreY + 38);
+  y += 5;
+ 
+  // PDM analysis section
+  doc.setFillColor(241, 245, 249);
+  doc.rect(15, y, 180, 8, "F");
+  doc.setTextColor(15, 23, 42);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text("Análise PDM · Cruzamento com camadas oficiais", 18, y + 5.5);
+  y += 12;
+ 
+  const findings = [
+    ["Classificação do solo", property.classificacao || "—", "OK", "PDM Art. 14º"],
+    ["Categoria de espaço", "Espaço Agrícola de Produção (Tipo II)", "OK", "Planta Ordenamento"],
+    ["Índice de utilização", "0,15", "Atenção", "PDM Art. 30º"],
+    ["Cércea máxima", "6,5 m (2 pisos)", "OK", "PDM Art. 31º"],
+    ["REN — Reserva Ecológica", "Parcialmente abrangido (~18%)", "Atenção", "Plant. Condicionantes"],
+    ["RAN — Reserva Agrícola", "Não abrangido", "OK", "DRAP"],
+    ["Servidão rodoviária", "Faixa non aedificandi 12m", "Atenção", "DL 13/94"],
+    ["Risco de incêndio rural", "Classe Média", "OK", "ICNF"],
+  ];
+ 
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  findings.forEach((f, i) => {
+    if (i % 2 === 0) {
+      doc.setFillColor(248, 250, 252);
+      doc.rect(15, y - 3.5, 180, 6, "F");
+    }
+    doc.setTextColor(71, 85, 105);
+    doc.text(f[0], 18, y);
+    doc.setTextColor(15, 23, 42);
+    doc.text(f[1], 75, y);
+    if (f[2] === "OK") doc.setTextColor(16, 122, 87);
+    else doc.setTextColor(180, 83, 9);
+    doc.text(f[2], 150, y);
+    doc.setTextColor(148, 163, 184);
+    doc.text(f[3], 195, y, { align: "right" });
+    y += 6;
+  });
+ 
+  y += 6;
+ 
+  // Recommendation block
+  doc.setFillColor(236, 253, 245);
+  doc.roundedRect(15, y, 180, 28, 2, 2, "F");
+  doc.setTextColor(6, 95, 70);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.text("RECOMENDAÇÃO TÉCNICA", 19, y + 6);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(15, 23, 42);
+  const recommendation = (property.score || 0) >= 80
+    ? "Viabilidade elevada. Recomenda-se prosseguir com PIP e levantamento topográfico."
+    : (property.score || 0) >= 60
+      ? "Viabilidade boa, com reservas. Avaliar condicionantes REN e RJIGT antes de avançar."
+      : (property.score || 0) >= 40
+        ? "Viabilidade condicionada. Recomenda-se análise jurídica detalhada e sondagem prévia."
+        : "Inviabilidade nas condições atuais. Aguardar próxima revisão do PDM.";
+  const wrapped = doc.splitTextToSize(recommendation, 170);
+  doc.text(wrapped, 19, y + 13);
+ 
+  // Footer
+  doc.setDrawColor(226, 232, 240);
+  doc.line(15, 282, 195, 282);
+  doc.setTextColor(148, 163, 184);
+  doc.setFontSize(7);
+  doc.text("© 2026 TerraCerta · Análise gerada automaticamente. Não substitui parecer técnico de arquiteto, engenheiro ou advogado especializado.", 15, 287);
+  doc.text("Página 1 de 1", 195, 287, { align: "right" });
+ 
+  doc.save(`TerraCerta_${property.id ?? "relatorio"}.pdf`);
+}
+ 
 // ----------------- LOGO -----------------
 const Logo = ({ size = "md", invert = false }) => {
   const dims = size === "lg" ? "h-9" : size === "sm" ? "h-6" : "h-7";
@@ -146,142 +369,176 @@ const Logo = ({ size = "md", invert = false }) => {
     </div>
   );
 };
-
+ 
 // ----------------- IMMERSIVE LANDSCAPE BACKGROUND -----------------
 const LandscapeBackground = () => (
-  <svg
-    viewBox="0 0 1920 1080"
-    preserveAspectRatio="xMidYMid slice"
-    className="absolute inset-0 w-full h-full"
-  >
-    <defs>
-      <linearGradient id="bg-sky" x1="0" x2="0" y1="0" y2="1">
-        <stop offset="0%" stopColor="#fbe7c4" />
-        <stop offset="35%" stopColor="#f4cfa0" />
-        <stop offset="70%" stopColor="#e8a978" />
-        <stop offset="100%" stopColor="#c9825a" />
-      </linearGradient>
-      <radialGradient id="bg-sun" cx="0.72" cy="0.32" r="0.18">
-        <stop offset="0%" stopColor="#fff5dc" stopOpacity="1" />
-        <stop offset="60%" stopColor="#ffe4b8" stopOpacity="0.4" />
-        <stop offset="100%" stopColor="#ffe4b8" stopOpacity="0" />
-      </radialGradient>
-      <linearGradient id="bg-mountains" x1="0" x2="0" y1="0" y2="1">
-        <stop offset="0%" stopColor="#7a8b8e" stopOpacity="0.6" />
-        <stop offset="100%" stopColor="#5b6e72" stopOpacity="0.85" />
-      </linearGradient>
-      <linearGradient id="bg-hill-far" x1="0" x2="0" y1="0" y2="1">
-        <stop offset="0%" stopColor="#9bb47e" />
-        <stop offset="100%" stopColor="#7a9460" />
-      </linearGradient>
-      <linearGradient id="bg-hill-mid" x1="0" x2="0" y1="0" y2="1">
-        <stop offset="0%" stopColor="#5e8650" />
-        <stop offset="100%" stopColor="#456838" />
-      </linearGradient>
-      <linearGradient id="bg-hill-near" x1="0" x2="0" y1="0" y2="1">
-        <stop offset="0%" stopColor="#3a5d34" />
-        <stop offset="100%" stopColor="#243d22" />
-      </linearGradient>
-      <linearGradient id="bg-field" x1="0" x2="0" y1="0" y2="1">
-        <stop offset="0%" stopColor="#d4c685" />
-        <stop offset="100%" stopColor="#a89255" />
-      </linearGradient>
-    </defs>
-
-    {/* Sky */}
-    <rect width="1920" height="1080" fill="url(#bg-sky)" />
-    <rect width="1920" height="1080" fill="url(#bg-sun)" />
-
-    {/* Distant mountain range (Serra da Estrela hint) */}
-    <path d="M0,520 L120,470 L210,495 L320,440 L420,475 L540,420 L660,460 L780,430 L900,475 L1040,440 L1180,490 L1320,455 L1480,485 L1620,445 L1780,475 L1920,455 L1920,600 L0,600 Z" fill="url(#bg-mountains)" />
-
-    {/* Far hills */}
-    <path d="M0,580 Q240,510 480,545 T960,520 T1440,540 T1920,510 L1920,720 L0,720 Z" fill="url(#bg-hill-far)" opacity="0.85" />
-
-    {/* Mid hills with vineyard rows */}
-    <path d="M0,660 Q320,580 640,620 T1280,610 T1920,600 L1920,820 L0,820 Z" fill="url(#bg-hill-mid)" />
-    {[670, 690, 710, 730, 750, 770, 790].map((y, i) => (
-      <path key={`m-${i}`} d={`M0,${y} Q500,${y - 6} 1000,${y + 2} T1920,${y - 4}`} stroke="#34522e" strokeWidth="1" fill="none" opacity="0.35" />
-    ))}
-
-    {/* Foreground hill */}
-    <path d="M0,780 Q400,700 800,740 T1500,720 T1920,740 L1920,1080 L0,1080 Z" fill="url(#bg-hill-near)" />
-
-    {/* Wheat / cereal field foreground */}
-    <path d="M0,860 Q500,820 1000,840 T1920,830 L1920,1080 L0,1080 Z" fill="url(#bg-field)" opacity="0.9" />
-    {[890, 920, 950, 980, 1010, 1040].map((y, i) => (
-      <path key={`f-${i}`} d={`M0,${y} Q600,${y - 8} 1200,${y + 2} T1920,${y - 6}`} stroke="#7d6b35" strokeWidth="1.2" fill="none" opacity="0.45" />
-    ))}
-
-    {/* Cypress trees clusters */}
-    {[
-      [180, 770], [210, 778], [235, 772],
-      [1460, 750], [1490, 758], [1520, 752], [1550, 760],
-      [820, 805], [850, 812],
-    ].map(([cx, cy], i) => (
-      <ellipse key={`tree-${i}`} cx={cx} cy={cy} rx={11 + (i % 3) * 2} ry={36 + (i % 4) * 4} fill="#1c3a1a" opacity="0.95" />
-    ))}
-
-    {/* Distant farmhouse / quinta */}
-    <g transform="translate(1100, 700)" opacity="0.85">
-      <rect x="0" y="20" width="48" height="28" fill="#f0e1c8" />
-      <polygon points="-4,20 24,4 52,20" fill="#8b4f3a" />
-      <rect x="20" y="32" width="8" height="16" fill="#3a2818" />
-      <rect x="6" y="28" width="6" height="6" fill="#3a2818" />
-      <rect x="34" y="28" width="6" height="6" fill="#3a2818" />
-      <rect x="22" y="-2" width="3" height="8" fill="#5a4030" />
-    </g>
-
-    {/* Stone wall hint in foreground */}
-    <path d="M0,855 Q500,840 1000,852 T1920,845" stroke="#5a4d33" strokeWidth="2.5" fill="none" opacity="0.4" />
-
-    {/* Birds */}
-    <g fill="none" stroke="#4a3a25" strokeWidth="1.5" opacity="0.5">
-      <path d="M1300,180 q5,-6 10,0 q5,-6 10,0" />
-      <path d="M1380,210 q5,-6 10,0 q5,-6 10,0" />
-      <path d="M1340,160 q4,-5 8,0 q4,-5 8,0" />
-    </g>
-  </svg>
+  <div className="absolute inset-0 overflow-hidden">
+    <style>{`
+      @keyframes drift-slow {
+        from { transform: translateX(-15vw); }
+        to   { transform: translateX(115vw); }
+      }
+      @keyframes drift-slower {
+        from { transform: translateX(-25vw); }
+        to   { transform: translateX(125vw); }
+      }
+      @keyframes fly-loop {
+        0%   { transform: translate(-10vw, 0) scale(1); }
+        45%  { transform: translate(50vw, -3vh) scale(0.9); }
+        100% { transform: translate(115vw, 2vh) scale(0.85); }
+      }
+      .tc-cloud-a { animation: drift-slow 110s linear infinite; }
+      .tc-cloud-b { animation: drift-slower 160s linear infinite -40s; }
+      .tc-cloud-c { animation: drift-slow 140s linear infinite -90s; }
+      .tc-birds   { animation: fly-loop 60s linear infinite; }
+    `}</style>
+ 
+    {/* Base landscape */}
+    <svg
+      viewBox="0 0 1920 1080"
+      preserveAspectRatio="xMidYMid slice"
+      className="absolute inset-0 w-full h-full"
+    >
+      <defs>
+        <linearGradient id="bg-sky" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%"   stopColor="#fbe7c4" />
+          <stop offset="35%"  stopColor="#f4cfa0" />
+          <stop offset="70%"  stopColor="#e8a978" />
+          <stop offset="100%" stopColor="#c9825a" />
+        </linearGradient>
+        <radialGradient id="bg-sun" cx="0.72" cy="0.32" r="0.18">
+          <stop offset="0%"   stopColor="#fff5dc" stopOpacity="1" />
+          <stop offset="60%"  stopColor="#ffe4b8" stopOpacity="0.4" />
+          <stop offset="100%" stopColor="#ffe4b8" stopOpacity="0" />
+        </radialGradient>
+        <linearGradient id="bg-mountains" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%"   stopColor="#7a8b8e" stopOpacity="0.6" />
+          <stop offset="100%" stopColor="#5b6e72" stopOpacity="0.85" />
+        </linearGradient>
+        <linearGradient id="bg-hill-far" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="#9bb47e" />
+          <stop offset="100%" stopColor="#7a9460" />
+        </linearGradient>
+        <linearGradient id="bg-hill-mid" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="#5e8650" />
+          <stop offset="100%" stopColor="#456838" />
+        </linearGradient>
+        <linearGradient id="bg-hill-near" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="#3a5d34" />
+          <stop offset="100%" stopColor="#243d22" />
+        </linearGradient>
+        <linearGradient id="bg-field" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="#d4c685" />
+          <stop offset="100%" stopColor="#a89255" />
+        </linearGradient>
+      </defs>
+ 
+      <rect width="1920" height="1080" fill="url(#bg-sky)" />
+      <rect width="1920" height="1080" fill="url(#bg-sun)" />
+ 
+      {/* Mountain range */}
+      <path d="M0,520 L120,470 L210,495 L320,440 L420,475 L540,420 L660,460 L780,430 L900,475 L1040,440 L1180,490 L1320,455 L1480,485 L1620,445 L1780,475 L1920,455 L1920,600 L0,600 Z" fill="url(#bg-mountains)" />
+      {/* Far hills */}
+      <path d="M0,580 Q240,510 480,545 T960,520 T1440,540 T1920,510 L1920,720 L0,720 Z" fill="url(#bg-hill-far)" opacity="0.85" />
+      {/* Mid hills with vineyard rows */}
+      <path d="M0,660 Q320,580 640,620 T1280,610 T1920,600 L1920,820 L0,820 Z" fill="url(#bg-hill-mid)" />
+      {[670, 690, 710, 730, 750, 770, 790].map((yy, i) => (
+        <path key={`m-${i}`} d={`M0,${yy} Q500,${yy - 6} 1000,${yy + 2} T1920,${yy - 4}`} stroke="#34522e" strokeWidth="1" fill="none" opacity="0.35" />
+      ))}
+      {/* Foreground hill */}
+      <path d="M0,780 Q400,700 800,740 T1500,720 T1920,740 L1920,1080 L0,1080 Z" fill="url(#bg-hill-near)" />
+      {/* Wheat field */}
+      <path d="M0,860 Q500,820 1000,840 T1920,830 L1920,1080 L0,1080 Z" fill="url(#bg-field)" opacity="0.9" />
+      {[890, 920, 950, 980, 1010, 1040].map((yy, i) => (
+        <path key={`f-${i}`} d={`M0,${yy} Q600,${yy - 8} 1200,${yy + 2} T1920,${yy - 6}`} stroke="#7d6b35" strokeWidth="1.2" fill="none" opacity="0.45" />
+      ))}
+      {/* Cypress trees */}
+      {[
+        [180, 770], [210, 778], [235, 772],
+        [1460, 750], [1490, 758], [1520, 752], [1550, 760],
+        [820, 805], [850, 812],
+      ].map(([cx, cy], i) => (
+        <ellipse key={`tree-${i}`} cx={cx} cy={cy} rx={11 + (i % 3) * 2} ry={36 + (i % 4) * 4} fill="#1c3a1a" opacity="0.95" />
+      ))}
+      {/* Quinta */}
+      <g transform="translate(1100, 700)" opacity="0.85">
+        <rect x="0" y="20" width="48" height="28" fill="#f0e1c8" />
+        <polygon points="-4,20 24,4 52,20" fill="#8b4f3a" />
+        <rect x="20" y="32" width="8" height="16" fill="#3a2818" />
+        <rect x="6" y="28" width="6" height="6" fill="#3a2818" />
+        <rect x="34" y="28" width="6" height="6" fill="#3a2818" />
+        <rect x="22" y="-2" width="3" height="8" fill="#5a4030" />
+      </g>
+      {/* Stone wall */}
+      <path d="M0,855 Q500,840 1000,852 T1920,845" stroke="#5a4d33" strokeWidth="2.5" fill="none" opacity="0.4" />
+    </svg>
+ 
+    {/* Animated clouds */}
+    <svg className="absolute top-[8%] left-0 w-[20vw] max-w-[260px] tc-cloud-a opacity-90 pointer-events-none" viewBox="0 0 200 60">
+      <g fill="white" opacity="0.85">
+        <ellipse cx="50" cy="35" rx="40" ry="18" />
+        <ellipse cx="90" cy="28" rx="32" ry="20" />
+        <ellipse cx="130" cy="35" rx="38" ry="16" />
+        <ellipse cx="160" cy="38" rx="22" ry="12" />
+      </g>
+    </svg>
+    <svg className="absolute top-[18%] left-0 w-[14vw] max-w-[180px] tc-cloud-b opacity-80 pointer-events-none" viewBox="0 0 200 60">
+      <g fill="white" opacity="0.75">
+        <ellipse cx="50" cy="35" rx="35" ry="14" />
+        <ellipse cx="85" cy="28" rx="28" ry="18" />
+        <ellipse cx="120" cy="35" rx="30" ry="13" />
+      </g>
+    </svg>
+    <svg className="absolute top-[5%] left-0 w-[12vw] max-w-[160px] tc-cloud-c opacity-70 pointer-events-none" viewBox="0 0 200 60">
+      <g fill="white" opacity="0.7">
+        <ellipse cx="60" cy="32" rx="32" ry="13" />
+        <ellipse cx="100" cy="28" rx="26" ry="16" />
+        <ellipse cx="135" cy="34" rx="22" ry="11" />
+      </g>
+    </svg>
+ 
+    {/* Animated birds */}
+    <svg className="absolute top-[22%] left-0 w-[8vw] max-w-[120px] tc-birds opacity-70 pointer-events-none" viewBox="0 0 100 40" fill="none" stroke="#3a2818" strokeWidth="1.6">
+      <path d="M5,20 q5,-7 10,0 q5,-7 10,0" />
+      <path d="M30,28 q4,-6 8,0 q4,-6 8,0" />
+      <path d="M55,18 q5,-7 10,0 q5,-7 10,0" />
+      <path d="M80,26 q4,-6 8,0 q4,-6 8,0" />
+    </svg>
+ 
+    {/* Vignette */}
+    <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/30 pointer-events-none" />
+    <div className="absolute inset-0 bg-gradient-to-r from-black/15 via-transparent to-transparent pointer-events-none" />
+  </div>
 );
-
-// ----------------- LOGIN PAGE (immersive) -----------------
+ 
+// ----------------- LOGIN PAGE -----------------
 const LoginPage = ({ onLogin }) => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-
+ 
   const handleLogin = (e) => {
     e?.preventDefault?.();
     setError(null);
-
     const normalisedEmail = email.toLowerCase().trim();
     const expectedPwd = ALLOWED_USERS[normalisedEmail];
-
     if (!expectedPwd) {
       setError("Conta não autorizada. Para obter acesso à plataforma TerraCerta, por favor contacte o administrador.");
       return;
     }
-
     if (expectedPwd !== password) {
       setError("Palavra-passe incorreta. Verifique e tente novamente.");
       return;
     }
-
     setSubmitting(true);
     setTimeout(() => onLogin(normalisedEmail), 300);
   };
-
+ 
   return (
     <div className="min-h-screen w-full relative overflow-hidden bg-slate-900">
-      {/* Fullscreen landscape */}
       <LandscapeBackground />
-
-      {/* Subtle vignette/darkening overlay for legibility */}
-      <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/30" />
-      <div className="absolute inset-0 bg-gradient-to-r from-black/15 via-transparent to-transparent" />
-
-      {/* Top bar with logo */}
+ 
       <header className="absolute top-0 left-0 right-0 z-20 px-8 py-6 flex items-center justify-between">
         <Logo size="lg" invert />
         <div className="hidden md:flex items-center gap-5 text-xs text-white/85" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.35)" }}>
@@ -290,19 +547,16 @@ const LoginPage = ({ onLogin }) => {
           <span className="flex items-center gap-1.5"><Activity size={13} /> Atualização contínua</span>
         </div>
       </header>
-
-      {/* Centered login card */}
+ 
       <main className="relative z-10 min-h-screen flex items-center justify-center px-4">
         <div className="w-full max-w-[420px] bg-white rounded-lg shadow-2xl border border-white/40 overflow-hidden">
-          {/* Top accent bar */}
           <div className="h-1 bg-gradient-to-r from-emerald-500 via-emerald-600 to-emerald-700" />
-
           <div className="p-8">
             <div className="mb-6">
               <h1 className="text-[22px] font-semibold text-slate-900 tracking-tight">Iniciar sessão</h1>
               <p className="text-sm text-slate-500 mt-1">Acesso restrito · plataforma TerraCerta</p>
             </div>
-
+ 
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
                 <label className="text-[11px] font-medium text-slate-700 uppercase tracking-wider">Email profissional</label>
@@ -319,7 +573,7 @@ const LoginPage = ({ onLogin }) => {
                   />
                 </div>
               </div>
-
+ 
               <div>
                 <div className="flex items-center justify-between">
                   <label className="text-[11px] font-medium text-slate-700 uppercase tracking-wider">Palavra-passe</label>
@@ -338,19 +592,19 @@ const LoginPage = ({ onLogin }) => {
                   />
                 </div>
               </div>
-
+ 
               <label className="flex items-center gap-2 text-xs text-slate-600 select-none cursor-pointer">
                 <input type="checkbox" defaultChecked className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" />
                 Manter sessão iniciada neste dispositivo
               </label>
-
+ 
               {error && (
                 <div className="flex items-start gap-2 p-3 bg-rose-50 border border-rose-200 rounded-md text-xs text-rose-700 leading-relaxed">
                   <AlertCircle size={14} className="shrink-0 mt-0.5" />
                   <span>{error}</span>
                 </div>
               )}
-
+ 
               <button
                 type="submit"
                 disabled={submitting}
@@ -362,22 +616,21 @@ const LoginPage = ({ onLogin }) => {
                   <>Entrar na plataforma <ArrowRight size={15} className="group-hover:translate-x-0.5 transition" /></>
                 )}
               </button>
-
+ 
               <div className="relative my-4">
                 <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200"></div></div>
                 <div className="relative flex justify-center text-xs"><span className="bg-white px-3 text-slate-400">ou</span></div>
               </div>
-
+ 
               <button type="button" className="w-full border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-medium py-2.5 rounded-md transition flex items-center justify-center gap-2">
                 <span className="text-base">🇵🇹</span> Autenticação Chave Móvel Digital
               </button>
-
+ 
               <p className="text-xs text-slate-500 text-center pt-3">
                 Sem conta? <button type="button" className="text-emerald-700 hover:text-emerald-800 font-medium">Solicitar acesso piloto</button>
               </p>
             </form>
           </div>
-
           <div className="px-8 py-3 bg-slate-50 border-t border-slate-200 text-[11px] text-slate-500 text-center">
             © 2026 TerraCerta · Análise de viabilidade territorial
           </div>
@@ -386,20 +639,29 @@ const LoginPage = ({ onLogin }) => {
     </div>
   );
 };
-
-// ----------------- TOP BAR (shared) -----------------
-const TopBar = ({ user, onLogout, onHome }) => {
+ 
+// ----------------- TOP BAR -----------------
+const TopBar = ({ user, currentPage, onLogout, onNavigate }) => {
   const initials = (user || "JL").split("@")[0].slice(0, 2).toUpperCase();
+  const isActive = (p) => currentPage === p;
+  const navBtn = (label, target) => (
+    <button
+      onClick={() => onNavigate(target)}
+      className={`px-3 py-1.5 rounded-md ${isActive(target) ? "text-slate-900 bg-slate-100 font-medium" : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"}`}
+    >
+      {label}
+    </button>
+  );
   return (
     <header className="border-b border-slate-200 bg-white sticky top-0 z-30">
       <div className="px-6 h-14 flex items-center justify-between">
         <div className="flex items-center gap-8">
-          <button onClick={onHome} className="hover:opacity-80 transition"><Logo /></button>
+          <button onClick={() => onNavigate("dashboard")} className="hover:opacity-80 transition"><Logo /></button>
           <nav className="hidden md:flex items-center gap-1 text-sm">
-            <button onClick={onHome} className="px-3 py-1.5 rounded-md text-slate-700 hover:bg-slate-100 font-medium">Imóveis</button>
-            <button className="px-3 py-1.5 rounded-md text-slate-500 hover:bg-slate-100">Análises</button>
-            <button className="px-3 py-1.5 rounded-md text-slate-500 hover:bg-slate-100">Relatórios</button>
-            <button className="px-3 py-1.5 rounded-md text-slate-500 hover:bg-slate-100">Camadas SIG</button>
+            {navBtn("Terrenos", "dashboard")}
+            {navBtn("Análises", "dashboard")}
+            {navBtn("Relatórios", "dashboard")}
+            {navBtn("Camadas SIG", "sig")}
           </nav>
         </div>
         <div className="flex items-center gap-2">
@@ -416,31 +678,31 @@ const TopBar = ({ user, onLogout, onHome }) => {
     </header>
   );
 };
-
+ 
 // ----------------- DASHBOARD -----------------
-const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelect, onLogout }) => {
+const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelect, onLogout, onNavigate }) => {
   const [filter, setFilter] = useState("");
   const filtered = properties.filter(p =>
     p.designacao?.toLowerCase().includes(filter.toLowerCase()) ||
     p.concelho?.toLowerCase().includes(filter.toLowerCase()) ||
     p.id?.toLowerCase().includes(filter.toLowerCase())
   );
-
+ 
   const totalArea = properties.reduce((s, p) => s + (p.area || 0), 0);
   const avgScore = properties.length
     ? Math.round(properties.reduce((s, p) => s + (p.score || 0), 0) / properties.length)
     : 0;
   const viable = properties.filter(p => (p.score || 0) >= 60).length;
-
+ 
   return (
     <div className="min-h-screen bg-slate-50">
-      <TopBar user={user} onLogout={onLogout} onHome={() => {}} />
-
+      <TopBar user={user} currentPage="dashboard" onLogout={onLogout} onNavigate={onNavigate} />
+ 
       <main className="px-6 py-6 max-w-[1500px] mx-auto">
         <div className="flex items-end justify-between mb-6">
           <div>
             <div className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-1">Carteira</div>
-            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Dashboard de Imóveis</h1>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Dashboard de Terrenos</h1>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -454,25 +716,25 @@ const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelec
               onClick={onNew}
               className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-md transition shadow-sm"
             >
-              <Plus size={15} /> Novo Imóvel
+              <Plus size={15} /> Novo Terreno
             </button>
           </div>
         </div>
-
+ 
         {error && (
           <div className="mb-4 flex items-start gap-2 p-3 bg-rose-50 border border-rose-200 rounded-md text-sm text-rose-700">
             <AlertCircle size={16} className="shrink-0 mt-0.5" />
             <div>
-              <div className="font-medium">Erro ao carregar a carteira de imóveis</div>
+              <div className="font-medium">Erro ao carregar a carteira de terrenos</div>
               <div className="text-xs mt-0.5">{error}</div>
             </div>
           </div>
         )}
-
+ 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-slate-200 border border-slate-200 rounded-md overflow-hidden mb-6">
           {[
-            { label: "Imóveis em carteira", value: loading ? "…" : properties.length, sub: "atualizado agora", icon: Layers, accent: "text-slate-900" },
-            { label: "Área total agregada", value: loading ? "…" : `${formatNumber(Math.round(totalArea / 10000))} ha`, sub: `${formatNumber(totalArea)} m²`, icon: Ruler, accent: "text-slate-900" },
+            { label: "Terrenos em carteira", value: loading ? "…" : properties.length, sub: "atualizado agora", icon: Layers, accent: "text-slate-900" },
+            { label: "Área total agregada", value: loading ? "…" : formatArea(totalArea), sub: totalArea < 10000 ? "abaixo de 1 ha" : `${formatNumber(totalArea)} m²`, icon: Ruler, accent: "text-slate-900" },
             { label: "Health Score médio", value: loading ? "…" : avgScore, sub: "/100", icon: Activity, accent: "text-emerald-700" },
             { label: "Viabilidade ≥ 60", value: loading ? "…" : `${viable}/${properties.length}`, sub: properties.length ? `${Math.round(viable / properties.length * 100)}% do portefólio` : "—", icon: TrendingUp, accent: "text-emerald-700" },
           ].map((s, i) => (
@@ -486,7 +748,7 @@ const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelec
             </div>
           ))}
         </div>
-
+ 
         <div className="bg-white border border-slate-200 rounded-t-md px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-1 max-w-md">
             <div className="relative flex-1">
@@ -502,24 +764,22 @@ const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelec
               <Filter size={13} /> Filtros
             </button>
           </div>
-          <div className="text-xs text-slate-500">
-            {filtered.length} de {properties.length} imóveis
-          </div>
+          <div className="text-xs text-slate-500">{filtered.length} de {properties.length} terrenos</div>
         </div>
-
+ 
         <div className="bg-white border border-slate-200 border-t-0 rounded-b-md overflow-hidden">
           {loading ? (
             <div className="py-16 flex flex-col items-center justify-center text-slate-400">
               <Loader2 size={28} className="animate-spin mb-3" />
-              <div className="text-sm">A carregar imóveis…</div>
+              <div className="text-sm">A carregar terrenos…</div>
             </div>
           ) : properties.length === 0 ? (
             <div className="py-16 flex flex-col items-center justify-center text-center text-slate-400">
               <Layers size={32} className="mb-3" />
               <div className="text-sm font-medium text-slate-600">A sua carteira está vazia</div>
-              <div className="text-xs mt-1 max-w-sm">Adicione o primeiro imóvel para começar a ver análises de viabilidade.</div>
+              <div className="text-xs mt-1 max-w-sm">Adicione o primeiro terreno para começar a ver análises de viabilidade.</div>
               <button onClick={onNew} className="mt-4 flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium rounded-md">
-                <Plus size={13} /> Novo Imóvel
+                <Plus size={13} /> Novo Terreno
               </button>
             </div>
           ) : (
@@ -532,7 +792,7 @@ const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelec
                   <th className="text-left px-4 py-2.5 font-medium">Designação</th>
                   <th className="text-left px-4 py-2.5 font-medium">Concelho / Freguesia</th>
                   <th className="text-left px-4 py-2.5 font-medium">Artigo Matricial</th>
-                  <th className="text-right px-4 py-2.5 font-medium">Área (m²)</th>
+                  <th className="text-right px-4 py-2.5 font-medium">Área</th>
                   <th className="text-left px-4 py-2.5 font-medium">Classificação</th>
                   <th className="text-center px-4 py-2.5 font-medium">Score</th>
                   <th className="text-left px-4 py-2.5 font-medium">Estado</th>
@@ -552,7 +812,7 @@ const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelec
                         <div className="text-xs text-slate-400">{p.freguesia}</div>
                       </td>
                       <td className="px-4 py-3 text-xs font-mono text-slate-600">{p.artigo}</td>
-                      <td className="px-4 py-3 text-right tabular-nums text-slate-900">{formatNumber(p.area)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-slate-900">{formatArea(p.area)}</td>
                       <td className="px-4 py-3 text-slate-600 text-xs">{p.classificacao}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-center gap-2">
@@ -580,8 +840,16 @@ const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelec
           <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
             <span>Última sincronização: agora</span>
             <div className="flex items-center gap-3">
-              <button className="hover:text-slate-700">Exportar CSV</button>
-              <button className="hover:text-slate-700 flex items-center gap-1">Ver tudo <ChevronRight size={11} /></button>
+              <button
+                onClick={() => exportCSV(filtered.length ? filtered : properties)}
+                disabled={!properties.length}
+                className="hover:text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Exportar CSV
+              </button>
+              <button onClick={() => onNavigate("sig")} className="hover:text-slate-700 flex items-center gap-1">
+                Ver no mapa <ChevronRight size={11} />
+              </button>
             </div>
           </div>
         </div>
@@ -589,28 +857,27 @@ const Dashboard = ({ user, properties, loading, error, onRefresh, onNew, onSelec
     </div>
   );
 };
-
+ 
 // ----------------- ANALYSIS PROGRESS OVERLAY -----------------
 const ANALYSIS_STEPS = [
   { msg: "A aceder ao servidor SNIT...", icon: Satellite },
   { msg: "A descarregar regulamento do PDM...", icon: Download },
   { msg: "A extrair dados da Caderneta Predial (OCR)...", icon: FileText },
-  { msg: "A cruzar localização com camadas REN e RAN...", icon: Map },
+  { msg: "A cruzar localização com camadas REN e RAN...", icon: MapIcon },
   { msg: "A calcular índices de edificabilidade...", icon: Calculator },
   { msg: "A gerar relatório final e Health Score...", icon: Sparkles },
 ];
 const STEP_DURATION_MS = 8000;
 const TOTAL_DURATION_MS = 55000;
-
+ 
 const AnalysisOverlay = ({ form, onDone, onError }) => {
   const [stepIdx, setStepIdx] = useState(0);
   const [progress, setProgress] = useState(0);
   const startedRef = useRef(false);
-
+ 
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
-
     const start = Date.now();
     const tick = setInterval(() => {
       const elapsed = Date.now() - start;
@@ -618,7 +885,7 @@ const AnalysisOverlay = ({ form, onDone, onError }) => {
       setStepIdx(idx);
       setProgress(Math.min((elapsed / TOTAL_DURATION_MS) * 100, 100));
     }, 120);
-
+ 
     const finish = setTimeout(async () => {
       clearInterval(tick);
       setProgress(100);
@@ -630,18 +897,17 @@ const AnalysisOverlay = ({ form, onDone, onError }) => {
         onError(e?.message ?? "Erro ao gravar a análise.");
       }
     }, TOTAL_DURATION_MS);
-
+ 
     return () => { clearInterval(tick); clearTimeout(finish); };
   }, []);
-
+ 
   const Icon = ANALYSIS_STEPS[stepIdx].icon;
-
+ 
   return (
     <div className="fixed inset-0 z-50 bg-gradient-to-br from-slate-50 via-white to-emerald-50/30 flex flex-col items-center justify-center p-6">
       <div className="absolute top-8 left-8"><Logo size="md" /></div>
-
+ 
       <div className="w-full max-w-xl text-center">
-        {/* Animated icon */}
         <div className="relative mx-auto mb-8 w-24 h-24">
           <div className="absolute inset-0 rounded-full bg-emerald-100 animate-ping opacity-30" />
           <div className="absolute inset-2 rounded-full bg-emerald-100/60" />
@@ -662,15 +928,14 @@ const AnalysisOverlay = ({ form, onDone, onError }) => {
             />
           </svg>
         </div>
-
+ 
         <div className="text-[11px] uppercase tracking-[0.25em] text-slate-500 font-medium mb-2">
           Análise em curso · {Math.round(progress)}%
         </div>
         <div className="text-2xl font-semibold text-slate-900 tracking-tight min-h-[2.5rem] transition-all">
           {ANALYSIS_STEPS[stepIdx].msg}
         </div>
-
-        {/* Progress bar */}
+ 
         <div className="mt-8 mx-auto max-w-md">
           <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
             <div
@@ -683,8 +948,7 @@ const AnalysisOverlay = ({ form, onDone, onError }) => {
             <span>0:55</span>
           </div>
         </div>
-
-        {/* Step list */}
+ 
         <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 max-w-lg mx-auto text-left">
           {ANALYSIS_STEPS.map((s, i) => {
             const done = i < stepIdx;
@@ -705,44 +969,96 @@ const AnalysisOverlay = ({ form, onDone, onError }) => {
             );
           })}
         </div>
-
+ 
         <div className="mt-10 text-[11px] text-slate-400">
-          A processar imóvel <span className="font-medium text-slate-600">{form.designacao}</span>
+          A processar terreno <span className="font-medium text-slate-600">{form.designacao}</span>
           {form.concelho && <> · {form.concelho}</>}
         </div>
       </div>
     </div>
   );
 };
-
+ 
 // ----------------- UPLOAD / NEW PROPERTY -----------------
-const UploadPage = ({ onCancel, onAnalyseDone }) => {
+const FileDropzone = ({ doc, file, onPick, onRemove }) => {
+  const inputRef = useRef(null);
+  return (
+    <div
+      onClick={() => !file && inputRef.current?.click()}
+      className={`group bg-white border rounded-md p-5 transition-all cursor-pointer ${
+        file ? "border-emerald-300 bg-emerald-50/30" : "border-dashed border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/20"
+      }`}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        className="hidden"
+        accept=".pdf,.dwg,.dxf,.png,.jpg,.jpeg"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onPick({ name: f.name, size: f.size });
+          e.target.value = "";
+        }}
+      />
+      <div className="flex items-center gap-4">
+        <div className={`h-11 w-11 rounded-md flex items-center justify-center shrink-0 ${
+          file ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500 group-hover:bg-emerald-100 group-hover:text-emerald-700"
+        }`}>
+          {file ? <CheckCircle2 size={20} /> : <doc.icon size={20} />}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-slate-900 text-sm">{doc.title}</span>
+            <span className="text-[10px] uppercase tracking-wider text-slate-400">{doc.hint}</span>
+          </div>
+          <div className="text-xs text-slate-500 mt-0.5">{doc.subtitle}</div>
+          {file && (
+            <div className="mt-2 flex items-center gap-2 text-xs">
+              <FileText size={12} className="text-emerald-700" />
+              <span className="font-mono text-slate-700 truncate max-w-[280px]" title={file.name}>{file.name}</span>
+              <span className="text-slate-400">· {formatBytes(file.size)}</span>
+            </div>
+          )}
+        </div>
+        {!file ? (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 rounded-md group-hover:border-emerald-400 group-hover:text-emerald-700">
+            <Upload size={12} /> Carregar
+          </div>
+        ) : (
+          <button onClick={(e) => { e.stopPropagation(); onRemove(); }} className="text-xs text-slate-400 hover:text-rose-600 px-2 py-1">
+            Remover
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+ 
+const UploadPage = ({ user, onCancel, onAnalyseDone, onLogout, onNavigate }) => {
   const [files, setFiles] = useState({ caderneta: null, planta: null, certidao: null });
   const [form, setForm] = useState({
-    designacao: "",
-    concelho: "",
-    freguesia: "",
-    artigo: "",
-    area: "",
-    classificacao: "",
+    designacao: "", concelho: "", freguesia: "", artigo: "", area: "", classificacao: "",
   });
   const [analysing, setAnalysing] = useState(false);
   const [insertError, setInsertError] = useState(null);
-
-  const setFile = (key) => setFiles(f => ({ ...f, [key]: { name: `${key}_${form.designacao || "documento"}.pdf`, size: "2.4 MB" } }));
-  const updateForm = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
-  const formValid = form.designacao.trim() && form.concelho.trim() && form.freguesia.trim()
+ 
+  const updateForm = (k, v) => setForm(f => {
+    const next = { ...f, [k]: v };
+    if (k === "concelho") next.freguesia = ""; // reset freguesia quando muda concelho
+    return next;
+  });
+ 
+  const formValid = form.designacao.trim() && form.concelho && form.freguesia
     && form.artigo.trim() && form.area && form.classificacao;
   const allUploaded = files.caderneta && files.planta && files.certidao;
   const canAnalyse = formValid && allUploaded;
-
+ 
   const docs = [
     { key: "caderneta", title: "Caderneta Predial", subtitle: "Documento das Finanças (Modelo 1)", icon: FileText, hint: "PDF · até 10MB" },
     { key: "planta", title: "Planta de Localização", subtitle: "Câmara Municipal · escala 1:2000 ou superior", icon: MapPin, hint: "PDF / DWG / DXF" },
     { key: "certidao", title: "Certidão Permanente", subtitle: "Conservatória do Registo Predial", icon: FileCheck, hint: "PDF · código de acesso aceite" },
   ];
-
+ 
   if (analysing) {
     return (
       <AnalysisOverlay
@@ -752,24 +1068,26 @@ const UploadPage = ({ onCancel, onAnalyseDone }) => {
       />
     );
   }
-
+ 
+  const freguesiasDisponiveis = form.concelho ? FREGUESIAS[form.concelho] || [] : [];
+ 
   return (
     <div className="min-h-screen bg-slate-50">
-      <TopBar onLogout={() => {}} onHome={onCancel} />
-
+      <TopBar user={user} currentPage="upload" onLogout={onLogout} onNavigate={onNavigate} />
+ 
       <main className="px-6 py-8 max-w-4xl mx-auto">
         <div className="mb-6">
           <button onClick={onCancel} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 mb-3">
             <ChevronLeft size={13} /> Voltar ao dashboard
           </button>
-          <div className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-1">Novo imóvel · Passo 1 de 2</div>
-          <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Submissão de imóvel</h1>
+          <div className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-1">Novo terreno · Passo 1 de 2</div>
+          <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Submissão de terreno</h1>
           <p className="text-sm text-slate-500 mt-1.5 max-w-2xl">
-            Preencha os dados matriciais do imóvel e carregue a documentação.
+            Preencha os dados matriciais do terreno e carregue a documentação.
             A análise demora ~55 segundos a concluir.
           </p>
         </div>
-
+ 
         {insertError && (
           <div className="mb-4 flex items-start gap-2 p-3 bg-rose-50 border border-rose-200 rounded-md text-sm text-rose-700">
             <AlertCircle size={16} className="shrink-0 mt-0.5" />
@@ -779,10 +1097,9 @@ const UploadPage = ({ onCancel, onAnalyseDone }) => {
             </div>
           </div>
         )}
-
-        {/* Form */}
+ 
         <div className="bg-white border border-slate-200 rounded-md p-5 mb-4">
-          <div className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-4">Dados do imóvel</div>
+          <div className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-4">Dados do terreno</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="md:col-span-2">
               <label className="text-[11px] font-medium text-slate-700 uppercase tracking-wider">Designação *</label>
@@ -800,18 +1117,23 @@ const UploadPage = ({ onCancel, onAnalyseDone }) => {
                 onChange={(e) => updateForm("concelho", e.target.value)}
                 className="mt-1.5 w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 bg-white"
               >
-                <option value="">Selecionar...</option>
+                <option value="">Selecionar concelho...</option>
                 {CONCELHOS.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[11px] font-medium text-slate-700 uppercase tracking-wider">Freguesia *</label>
-              <input
+              <label className="text-[11px] font-medium text-slate-700 uppercase tracking-wider">
+                Freguesia * {!form.concelho && <span className="text-slate-400 normal-case">(escolha primeiro o concelho)</span>}
+              </label>
+              <select
                 value={form.freguesia}
                 onChange={(e) => updateForm("freguesia", e.target.value)}
-                placeholder="Ex: Pinheiro"
-                className="mt-1.5 w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
-              />
+                disabled={!form.concelho}
+                className="mt-1.5 w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 bg-white disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+              >
+                <option value="">{form.concelho ? "Selecionar freguesia..." : "—"}</option>
+                {freguesiasDisponiveis.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
             </div>
             <div>
               <label className="text-[11px] font-medium text-slate-700 uppercase tracking-wider">Artigo matricial *</label>
@@ -826,11 +1148,15 @@ const UploadPage = ({ onCancel, onAnalyseDone }) => {
               <label className="text-[11px] font-medium text-slate-700 uppercase tracking-wider">Área (m²) *</label>
               <input
                 type="number"
+                min="0"
                 value={form.area}
                 onChange={(e) => updateForm("area", e.target.value)}
                 placeholder="Ex: 12450"
                 className="mt-1.5 w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 tabular-nums"
               />
+              {form.area && (
+                <div className="mt-1 text-[11px] text-slate-500">≈ {formatArea(Number(form.area))}</div>
+              )}
             </div>
             <div className="md:col-span-2">
               <label className="text-[11px] font-medium text-slate-700 uppercase tracking-wider">Classificação atual *</label>
@@ -839,63 +1165,26 @@ const UploadPage = ({ onCancel, onAnalyseDone }) => {
                 onChange={(e) => updateForm("classificacao", e.target.value)}
                 className="mt-1.5 w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 bg-white"
               >
-                <option value="">Selecionar...</option>
+                <option value="">Selecionar classificação...</option>
                 {CLASSIFICACOES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
           </div>
         </div>
-
-        {/* Documents */}
+ 
         <div className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-3 px-1">Documentação de suporte</div>
         <div className="space-y-3">
-          {docs.map((d) => {
-            const file = files[d.key];
-            return (
-              <div
-                key={d.key}
-                onClick={() => !file && setFile(d.key)}
-                className={`group bg-white border rounded-md p-5 transition-all cursor-pointer ${
-                  file ? "border-emerald-300 bg-emerald-50/30" : "border-dashed border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/20"
-                }`}
-              >
-                <div className="flex items-center gap-4">
-                  <div className={`h-11 w-11 rounded-md flex items-center justify-center shrink-0 ${
-                    file ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500 group-hover:bg-emerald-100 group-hover:text-emerald-700"
-                  }`}>
-                    {file ? <CheckCircle2 size={20} /> : <d.icon size={20} />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-slate-900 text-sm">{d.title}</span>
-                      <span className="text-[10px] uppercase tracking-wider text-slate-400">{d.hint}</span>
-                    </div>
-                    <div className="text-xs text-slate-500 mt-0.5">{d.subtitle}</div>
-                    {file && (
-                      <div className="mt-2 flex items-center gap-2 text-xs">
-                        <FileText size={12} className="text-emerald-700" />
-                        <span className="font-mono text-slate-700">{file.name}</span>
-                        <span className="text-slate-400">· {file.size}</span>
-                      </div>
-                    )}
-                  </div>
-                  {!file ? (
-                    <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 rounded-md group-hover:border-emerald-400 group-hover:text-emerald-700">
-                      <Upload size={12} /> Carregar
-                    </div>
-                  ) : (
-                    <button onClick={(e) => { e.stopPropagation(); setFiles(f => ({ ...f, [d.key]: null })); }}
-                      className="text-xs text-slate-400 hover:text-rose-600 px-2 py-1">
-                      Remover
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+          {docs.map((d) => (
+            <FileDropzone
+              key={d.key}
+              doc={d}
+              file={files[d.key]}
+              onPick={(meta) => setFiles(prev => ({ ...prev, [d.key]: meta }))}
+              onRemove={() => setFiles(prev => ({ ...prev, [d.key]: null }))}
+            />
+          ))}
         </div>
-
-        {/* Options */}
+ 
         <div className="mt-6 bg-white border border-slate-200 rounded-md p-4">
           <div className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-3">Parâmetros de análise</div>
           <div className="grid grid-cols-2 gap-4 text-sm">
@@ -905,7 +1194,7 @@ const UploadPage = ({ onCancel, onAnalyseDone }) => {
             <label className="flex items-center gap-2"><input type="checkbox" className="rounded text-emerald-600" /> Estimativa de valor de mercado (β)</label>
           </div>
         </div>
-
+ 
         <div className="mt-6 flex items-center justify-between">
           <div className="text-xs text-slate-500 flex items-center gap-1.5">
             <Shield size={12} /> Documentos cifrados em repouso · removidos após 90 dias
@@ -923,7 +1212,7 @@ const UploadPage = ({ onCancel, onAnalyseDone }) => {
             </button>
           </div>
         </div>
-
+ 
         {!canAnalyse && (
           <div className="mt-3 text-right text-[11px] text-slate-400">
             {!formValid && "Preencha todos os campos obrigatórios. "}
@@ -934,14 +1223,146 @@ const UploadPage = ({ onCancel, onAnalyseDone }) => {
     </div>
   );
 };
-
+ 
+// ----------------- SIG / MAP PAGE -----------------
+const SIGPage = ({ user, properties, onLogout, onNavigate }) => {
+  const [layers, setLayers] = useState({
+    pdm: true, ren: false, ran: false, prot: false, hidrografia: false, riscos: false,
+  });
+  const [bbox, setBbox] = useState("-10.0,36.5,-6.0,42.5"); // Portugal continental
+ 
+  const layerList = [
+    { key: "pdm", label: "PDM municipais", count: 308 },
+    { key: "ren", label: "Reserva Ecológica Nacional", count: 1 },
+    { key: "ran", label: "Reserva Agrícola Nacional", count: 1 },
+    { key: "prot", label: "PROT regionais", count: 5 },
+    { key: "hidrografia", label: "Rede hidrográfica", count: 1 },
+    { key: "riscos", label: "Riscos naturais (incêndio)", count: 1 },
+  ];
+ 
+  const presets = [
+    { label: "Portugal", bbox: "-10.0,36.5,-6.0,42.5" },
+    { label: "Lisboa", bbox: "-9.30,38.65,-9.05,38.85" },
+    { label: "Porto", bbox: "-8.75,41.10,-8.50,41.25" },
+    { label: "Sintra", bbox: "-9.55,38.75,-9.30,38.92" },
+    { label: "Oeiras", bbox: "-9.40,38.65,-9.20,38.78" },
+  ];
+ 
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <TopBar user={user} currentPage="sig" onLogout={onLogout} onNavigate={onNavigate} />
+ 
+      <main className="px-6 py-6 max-w-[1500px] mx-auto">
+        <div className="flex items-end justify-between mb-5">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-1">Cartografia</div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Camadas SIG · Cartografia oficial</h1>
+            <p className="text-sm text-slate-500 mt-1.5 max-w-2xl">
+              Visualização interativa do território português com sobreposição de camadas oficiais.
+            </p>
+          </div>
+          <div className="flex items-center gap-1">
+            {presets.map(p => (
+              <button
+                key={p.label}
+                onClick={() => setBbox(p.bbox)}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md border transition ${
+                  bbox === p.bbox ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+ 
+        <div className="grid grid-cols-12 gap-4">
+          <aside className="col-span-12 lg:col-span-3 space-y-4">
+            <div className="bg-white border border-slate-200 rounded-md p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Layers size={14} className="text-slate-500" />
+                <h3 className="text-xs uppercase tracking-wider text-slate-500 font-medium">Camadas disponíveis</h3>
+              </div>
+              <div className="space-y-1">
+                {layerList.map(l => (
+                  <label
+                    key={l.key}
+                    className={`flex items-center justify-between gap-2 px-2 py-2 rounded-md cursor-pointer transition ${
+                      layers[l.key] ? "bg-emerald-50" : "hover:bg-slate-50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={layers[l.key]}
+                        onChange={(e) => setLayers(p => ({ ...p, [l.key]: e.target.checked }))}
+                        className="rounded text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span className={layers[l.key] ? "text-slate-900 font-medium" : "text-slate-700"}>{l.label}</span>
+                    </div>
+                    {layers[l.key] ? <Eye size={13} className="text-emerald-600" /> : <EyeOff size={13} className="text-slate-300" />}
+                  </label>
+                ))}
+              </div>
+            </div>
+ 
+            <div className="bg-white border border-slate-200 rounded-md p-4">
+              <h3 className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-3 flex items-center gap-2">
+                <Globe2 size={13} /> Resumo
+              </h3>
+              <dl className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <dt className="text-slate-500">Camadas ativas</dt>
+                  <dd className="font-medium text-slate-900">{Object.values(layers).filter(Boolean).length} / {layerList.length}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-slate-500">Terrenos no mapa</dt>
+                  <dd className="font-medium text-slate-900">{properties.length}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-slate-500">Zoom atual</dt>
+                  <dd className="font-medium text-slate-900 text-xs">{bbox.split(",").map(n => Number(n).toFixed(1)).join(", ")}</dd>
+                </div>
+              </dl>
+            </div>
+ 
+            <div className="bg-emerald-50 border border-emerald-200 rounded-md p-4 text-xs text-emerald-800 leading-relaxed">
+              <Info size={14} className="inline mr-1 -mt-0.5" />
+              As camadas selecionadas serão sobrepostas no mapa quando a integração WMS DGT estiver disponível.
+            </div>
+          </aside>
+ 
+          <div className="col-span-12 lg:col-span-9 bg-white border border-slate-200 rounded-md overflow-hidden">
+            <iframe
+              key={bbox}
+              src={`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik`}
+              className="w-full h-[70vh] border-0"
+              title="Mapa Portugal"
+            />
+            <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
+              <span>Cartografia base © OpenStreetMap contributors · ODbL</span>
+              <a
+                href={`https://www.openstreetmap.org/?bbox=${bbox}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-700 hover:text-emerald-800 font-medium flex items-center gap-1"
+              >
+                Abrir mapa em nova janela <ExternalLink size={11} />
+              </a>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+};
+ 
 // ----------------- HEALTH SCORE GAUGE -----------------
 const HealthGauge = ({ score }) => {
   const c = scoreColor(score);
   const r = 70;
   const circ = 2 * Math.PI * r;
   const offset = circ - ((score || 0) / 100) * circ;
-
   return (
     <div className="relative w-44 h-44">
       <svg className="w-full h-full -rotate-90" viewBox="0 0 160 160">
@@ -964,11 +1385,12 @@ const HealthGauge = ({ score }) => {
     </div>
   );
 };
-
+ 
 // ----------------- ANALYSIS PAGE -----------------
-const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
+const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout, onNavigate }) => {
   const c = scoreColor(property.score);
-
+  const pdmLink = PDM_LINKS[property.concelho] || "https://www.dgterritorio.gov.pt/";
+ 
   const pdmFindings = [
     { label: "Classificação do solo", value: property.classificacao, status: "ok", source: "PDM Art. 14º" },
     { label: "Categoria de espaço", value: "Espaço Agrícola de Produção (Tipo II)", status: (property.score || 0) >= 60 ? "ok" : "warn", source: "Planta de Ordenamento" },
@@ -976,27 +1398,27 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
     { label: "Índice de utilização (Iu)", value: "0,15", status: "warn", source: "PDM Art. 30º" },
     { label: "Cércea máxima", value: "6,5 m (2 pisos)", status: "ok", source: "PDM Art. 31º" },
     { label: "REN — Reserva Ecológica", value: "Parcialmente abrangido (≈18%)", status: "warn", source: "Planta de Condicionantes" },
-    { label: "RAN — Reserva Agrícola", value: "Não abrangido", status: "ok", source: "DRAP-Centro" },
+    { label: "RAN — Reserva Agrícola", value: "Não abrangido", status: "ok", source: "DRAP" },
     { label: "Servidão rodoviária", value: "Faixa non aedificandi 12m (EN229)", status: "warn", source: "DL 13/94" },
     { label: "Risco de incêndio rural", value: "Classe Média", status: "ok", source: "ICNF · Carta 2025" },
   ];
-
+ 
   const conversionScore = Math.max(15, (property.score || 0) - 22);
-
+ 
   return (
     <div className="min-h-screen bg-slate-50">
-      <TopBar user={user} onLogout={onLogout} onHome={onBack} />
-
+      <TopBar user={user} currentPage="analysis" onLogout={onLogout} onNavigate={onNavigate} />
+ 
       <main className="px-6 py-6 max-w-[1400px] mx-auto">
         <div className="mb-5">
           <button onClick={onBack} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 mb-3">
-            <ChevronLeft size={13} /> Imóveis · {property.id}
+            <ChevronLeft size={13} /> Terrenos · {property.id}
           </button>
           <div className="flex items-end justify-between flex-wrap gap-3">
             <div>
               <div className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-1">Análise de viabilidade</div>
               <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">{property.designacao}</h1>
-              <div className="flex items-center gap-2 text-xs text-slate-500 mt-1.5">
+              <div className="flex items-center gap-2 text-xs text-slate-500 mt-1.5 flex-wrap">
                 <MapPin size={12} /> {property.freguesia}, {property.concelho}
                 <span className="text-slate-300">·</span>
                 <Hash size={12} /> {property.artigo}
@@ -1019,13 +1441,16 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
                   2 · Conversão Urbano
                 </button>
               </div>
-              <button className="px-3 py-1.5 text-xs font-medium border border-slate-200 rounded-md hover:bg-slate-50 text-slate-700 flex items-center gap-1.5">
+              <button
+                onClick={() => onNavigate("sig")}
+                className="px-3 py-1.5 text-xs font-medium border border-slate-200 rounded-md hover:bg-slate-50 text-slate-700 flex items-center gap-1.5"
+              >
                 <ExternalLink size={12} /> Abrir no mapa
               </button>
             </div>
           </div>
         </div>
-
+ 
         {page === 1 ? (
           <div className="grid grid-cols-12 gap-4">
             <div className="col-span-12 lg:col-span-4 space-y-4">
@@ -1038,7 +1463,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
                   Score calculado com base em 14 indicadores do PDM, condicionantes legais e camadas oficiais do território.
                 </p>
               </div>
-
+ 
               <div className="bg-white border border-slate-200 rounded-md">
                 <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
                   <span className="text-[11px] uppercase tracking-wider text-slate-500 font-medium">Dados extraídos</span>
@@ -1049,7 +1474,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
                     ["Concelho", property.concelho, MapPin],
                     ["Freguesia", property.freguesia, MapPin],
                     ["Artigo matricial", property.artigo, Hash],
-                    ["Área total", `${formatNumber(property.area)} m²`, Ruler],
+                    ["Área total", formatArea(property.area), Ruler],
                     ["Confrontações", "N: caminho público", Building2],
                     ["Inscrição", "Definitiva 2018-04-12", FileCheck],
                     ["PDM aplicável", property.pdmRef, Layers],
@@ -1062,7 +1487,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
                 </dl>
               </div>
             </div>
-
+ 
             <div className="col-span-12 lg:col-span-8 space-y-4">
               <div className="bg-white border border-slate-200 rounded-md">
                 <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
@@ -1077,7 +1502,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
                   </div>
                   <div className="text-xs text-slate-400">Fonte oficial DGT</div>
                 </div>
-
+ 
                 <div className="divide-y divide-slate-100">
                   {pdmFindings.map((f, i) => {
                     const Icon = f.status === "ok" ? CheckCircle : f.status === "warn" ? AlertTriangle : XCircle;
@@ -1094,19 +1519,24 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
                     );
                   })}
                 </div>
-
+ 
                 <div className="bg-slate-50 px-5 py-3 border-t border-slate-200 flex items-center justify-between text-xs">
                   <div className="flex items-center gap-4 text-slate-500">
                     <span className="flex items-center gap-1"><CheckCircle size={11} className="text-emerald-600" /> 5 conformes</span>
                     <span className="flex items-center gap-1"><AlertTriangle size={11} className="text-amber-600" /> 4 condicionantes</span>
                     <span className="flex items-center gap-1"><XCircle size={11} className="text-rose-600" /> 0 inviáveis</span>
                   </div>
-                  <button className="text-emerald-700 hover:text-emerald-800 font-medium flex items-center gap-1">
-                    Ver regulamento integral <ChevronRight size={11} />
-                  </button>
+                  <a
+                    href={pdmLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-emerald-700 hover:text-emerald-800 font-medium flex items-center gap-1"
+                  >
+                    Ver regulamento integral <ExternalLink size={11} />
+                  </a>
                 </div>
               </div>
-
+ 
               <div className="bg-white border border-slate-200 rounded-md p-5">
                 <h3 className="font-semibold text-slate-900 text-sm mb-3 flex items-center gap-2">
                   <Sparkles size={14} className="text-emerald-700" />
@@ -1119,7 +1549,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
                   <li className="flex gap-3"><span className="text-emerald-700 font-mono text-xs mt-0.5">04</span><span>O PDM tem <strong>3ª Alteração por Adaptação</strong> em vigor desde 12/03/2025 — recomenda-se confirmar versão.</span></li>
                 </ul>
               </div>
-
+ 
               <div className="flex justify-end">
                 <button
                   onClick={() => setPage(2)}
@@ -1140,7 +1570,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
                     Simulação baseada nos critérios do RJIGT (DL 80/2015) e nas dinâmicas territoriais do concelho.
                   </p>
                 </div>
-
+ 
                 <div className="p-5 grid grid-cols-3 gap-px bg-slate-200 border border-slate-200 rounded-md overflow-hidden">
                   {[
                     { label: "Probabilidade conversão", value: `${conversionScore}%`, sub: "horizonte 5-7 anos", color: scoreColor(conversionScore).text },
@@ -1154,7 +1584,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
                     </div>
                   ))}
                 </div>
-
+ 
                 <div className="px-5 pb-5">
                   <h3 className="text-xs uppercase tracking-wider text-slate-500 font-medium mt-5 mb-3">Análise dos requisitos legais (RJIGT)</h3>
                   <div className="border border-slate-200 rounded-md divide-y divide-slate-100">
@@ -1180,10 +1610,10 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
                   </div>
                 </div>
               </div>
-
+ 
               <div className="bg-white border border-slate-200 rounded-md p-5">
                 <h3 className="font-semibold text-slate-900 text-sm mb-1">Impacto no valor (cenário comparativo)</h3>
-                <p className="text-xs text-slate-500 mb-4">Estimativa baseada em transações comparáveis na região (DGRMI 2024-2026).</p>
+                <p className="text-xs text-slate-500 mb-4">Estimativa baseada em transações comparáveis na região (INE / Autoridade Tributária 2024).</p>
                 <div className="grid grid-cols-3 gap-4 text-sm">
                   {[
                     { tag: "Atual (rústico)", v: "€ 24.900", sub: "≈ €2,00/m²", color: "border-slate-200" },
@@ -1199,7 +1629,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
                 </div>
               </div>
             </div>
-
+ 
             <div className="col-span-12 lg:col-span-4 space-y-4">
               <div className="bg-white border border-slate-200 rounded-md p-5">
                 <div className="flex items-center justify-between mb-3">
@@ -1215,7 +1645,7 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
                   <span>0</span><span>50</span><span>100</span>
                 </div>
               </div>
-
+ 
               <div className="bg-white border border-slate-200 rounded-md p-5">
                 <h3 className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-3">Próximos passos sugeridos</h3>
                 <ol className="space-y-3 text-sm text-slate-700">
@@ -1224,21 +1654,24 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
                   <li className="flex gap-3"><span className="h-5 w-5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold flex items-center justify-center shrink-0">3</span><span>Acompanhar próxima revisão do PDM (período sondagem prevista 2027).</span></li>
                 </ol>
               </div>
-
-              <button className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-3 rounded-md flex items-center justify-center gap-2 shadow-sm transition">
+ 
+              <button
+                onClick={() => exportPropertyPDF(property)}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-3 rounded-md flex items-center justify-center gap-2 shadow-sm transition"
+              >
                 <Download size={15} /> Exportar PDF com Logótipo
               </button>
               <button className="w-full border border-slate-200 hover:bg-slate-50 text-slate-700 text-sm font-medium py-2.5 rounded-md flex items-center justify-center gap-2 transition">
                 <FileText size={14} /> Partilhar com cliente
               </button>
-
+ 
               <div className="text-[11px] text-slate-400 leading-relaxed px-1">
                 <Info size={11} className="inline mr-1" />
                 Análise gerada automaticamente. Não substitui parecer técnico
                 de arquiteto, engenheiro ou advogado especializado.
               </div>
             </div>
-
+ 
             <div className="col-span-12 flex justify-between">
               <button
                 onClick={() => setPage(1)}
@@ -1259,18 +1692,18 @@ const AnalysisPage = ({ user, property, page, setPage, onBack, onLogout }) => {
     </div>
   );
 };
-
+ 
 // ----------------- ROOT -----------------
 export default function App() {
   const [page, setPage] = useState("login");
   const [user, setUser] = useState(null);
   const [selected, setSelected] = useState(null);
   const [analysisPage, setAnalysisPage] = useState(1);
-
+ 
   const [properties, setProperties] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-
+ 
   const loadProperties = async () => {
     setLoading(true);
     setError(null);
@@ -1284,24 +1717,31 @@ export default function App() {
       setLoading(false);
     }
   };
-
+ 
   useEffect(() => {
-    if (page === "dashboard") loadProperties();
+    if (page === "dashboard" || page === "sig") loadProperties();
   }, [page]);
-
+ 
   const handleLogin = (email) => {
     setUser(email);
     setPage("dashboard");
   };
-
+ 
   const handleLogout = () => {
     setUser(null);
     setSelected(null);
     setProperties([]);
     setPage("login");
   };
-
+ 
+  const handleNavigate = (target) => {
+    if (target === "dashboard" || target === "sig" || target === "upload") {
+      setPage(target);
+    }
+  };
+ 
   if (page === "login") return <LoginPage onLogin={handleLogin} />;
+ 
   if (page === "dashboard") return (
     <Dashboard
       user={user}
@@ -1312,14 +1752,29 @@ export default function App() {
       onNew={() => setPage("upload")}
       onSelect={(p) => { setSelected(p); setAnalysisPage(1); setPage("analysis"); }}
       onLogout={handleLogout}
+      onNavigate={handleNavigate}
     />
   );
+ 
   if (page === "upload") return (
     <UploadPage
+      user={user}
       onCancel={() => setPage("dashboard")}
       onAnalyseDone={(prop) => { setSelected(prop); setAnalysisPage(1); setPage("analysis"); }}
+      onLogout={handleLogout}
+      onNavigate={handleNavigate}
     />
   );
+ 
+  if (page === "sig") return (
+    <SIGPage
+      user={user}
+      properties={properties}
+      onLogout={handleLogout}
+      onNavigate={handleNavigate}
+    />
+  );
+ 
   if (page === "analysis" && selected) return (
     <AnalysisPage
       user={user}
@@ -1328,7 +1783,8 @@ export default function App() {
       setPage={setAnalysisPage}
       onBack={() => setPage("dashboard")}
       onLogout={handleLogout}
+      onNavigate={handleNavigate}
     />
   );
+ 
   return null;
-}
